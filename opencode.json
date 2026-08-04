@@ -109,17 +109,6 @@
                 "edit": true,
                 "bash": true
             }
-        },
-        "plan": {
-            "mode": "primary",
-            "model": "ollama/laguna-xs-1m:latest",
-            "prompt": "Você é um desenvolvedor sênior de node.js e typescript. Crie um plano de implementação baseado em evidências para implementar tudo que for pedido, se não tiver certeza se deve fazer algo pergunte, nunca faça algo sem ter certeza. Usar o mcp do Context7 para buscar informação sobre bibliotecas e dependencias.",
-            "tools": {
-                "read": true,
-                "write": true,
-                "edit": false,
-                "bash": true
-            }
         }
     },
     "formatter": {
