@@ -25,6 +25,7 @@
   },
   "homepage": "https://github.com/steglich/finance-core-node#readme",
   "dependencies": {
+    "bcrypt": "5.1.1",
     "dotenv": "17.4.2",
     "knex": "3.3.0",
     "pg": "8.22.0"

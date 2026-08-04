@@ -21,15 +21,15 @@
 
 ## 3. Identity — Domínio
 
-- [ ] 3.1 Implementar value objects: `Email`, `Password` (com hash/verificação), `CPF`, `CNPJ`, `CompanyType`
-- [ ] 3.2 Implementar entidade `User` (id, name, email, passwordHash, status, timestamps)
-- [ ] 3.3 Implementar entidade `Company` (id, name, type, defaultCurrency, timestamps)
-- [ ] 3.4 Implementar entidade `Profile` (id, companyId, name, permissions[])
-- [ ] 3.5 Implementar entidade `Permission` (resource, action)
-- [ ] 3.6 Implementar `User.create()` com validação de email único e hash de senha
+- [x] 3.1 Implementar value objects: `Email`, `Password` (com hash/verificação), `CPF`, `CNPJ`, `CompanyType`
+- [x] 3.2 Implementar entidade `User` (id, name, email, passwordHash, status, timestamps)
+- [x] 3.3 Implementar entidade `Company` (id, name, type, defaultCurrency, timestamps)
+- [x] 3.4 Implementar entidade `Profile` (id, companyId, name, permissions[])
+- [x] 3.5 Implementar entidade `Permission` (resource, action)
+- [x] 3.6 Implementar `User.create()` com validação de email único e hash de senha
 - [ ] 3.7 Implementar `Company.create()` com geração de categorias padrão
-- [ ] 3.8 Implementar `Company.addUser(userId, profileId)` e `Company.removeUser(userId)`
-- [ ] 3.9 Implementar eventos de domínio: `UserRegistered`, `UserAddedToCompany`
+- [x] 3.8 Implementar `Company.addUser(userId, profileId)` e `Company.removeUser(userId)`
+- [x] 3.9 Implementar eventos de domínio: `UserRegistered`, `UserAddedToCompany`
 
 ## 4. Identity — Infraestrutura
 
