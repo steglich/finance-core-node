@@ -1,12 +1,13 @@
 // Value Objects
 export { Email } from "./email.js";
-export type { CompanyTypeValue } from "./company-type.js";
+// Note: CompanyTypeValue is exported from company.ts (for Company entity) and BrazilianCompanyType from company-type.ts
+export type { CompanyTypeValue as BrazilianCompanyType } from "./company-type.js";
 export { CompanyType } from "./company-type.js";
 export { CPF } from "./cpf.js";
 export { CNPJ } from "./cnpj.js";
 export { Password } from "./password.js";
 
-// Entities
+// Entities - Note: CompanyTypeValue is defined in company.ts for use with the Company entity
 export {
   User,
   type UserStatus,
@@ -17,7 +18,11 @@ export {
   Company,
   createUserAddedToCompany,
   type UserAddedToCompany,
+  type CreateCompanyInput,
+  type CreateCompanyResult,
 } from "./company.js";
+// Re-export CompanyTypeValue for convenience (defined in company.ts)
+export type { CompanyTypeValue } from "./company.js";
 export {
   Profile,
   Permission,
@@ -26,4 +31,8 @@ export {
 } from "./profile.js";
 
 // Services
-export { UserService, type CreateUserInput } from "./user-service.js";
+export {
+  UserService,
+  CompanyService,
+  type CreateUserInput,
+} from "./user-service.js";

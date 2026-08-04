@@ -3,9 +3,15 @@ import type { UserRepository } from "../infrastructure/user-repository.js";
 import type { CompanyRepository } from "../infrastructure/company-repository.js";
 import type { ProfileRepository } from "../infrastructure/profile-repository.js";
 import type { PasswordService } from "./password-service.js";
+import type { CategoryRepository } from "../../financeiro/infrastructure/category-repository.js";
+import type { CreateCompanyInput, CreateCompanyResult } from "./company.js";
 import { User, type UserStatus } from "./user.js";
 import { Email } from "./email.js";
 import { CompanyType } from "./company-type.js";
+import {
+  DEFAULT_EXPENSE_CATEGORIES,
+  DEFAULT_INCOME_CATEGORIES,
+} from "../../financeiro/domain/category.js";
 
 /**
  * Input for creating a new user.
@@ -95,5 +101,57 @@ export class UserService {
     const companyIds = await this.companyRepository.findUserCompanies(user.id);
 
     return { user, companyIds };
+  }
+}
+
+/**
+ * Company service that handles business logic for company creation.
+ */
+export class CompanyService {
+  constructor(
+    private readonly companyRepository: CompanyRepository,
+    private readonly categoryRepository: CategoryRepository,
+  ) {}
+
+  /**
+   * Creates a new company with default categories (RN-08).
+   */
+  async create(input: CreateCompanyInput): Promise<CreateCompanyResult> {
+    const companyId = crypto.randomUUID();
+
+    // Import Company class dynamically to avoid circular dependency issues
+    const { Company } = await import("./company.js");
+
+    const company = new Company(
+      companyId,
+      input.name.trim(),
+      input.type,
+      input.defaultCurrency || "BRL",
+    );
+
+    // Create default categories (RN-08)
+    const categoryInputs = [
+      ...DEFAULT_EXPENSE_CATEGORIES.map((name) => ({
+        name,
+        type: "EXPENSE" as const,
+      })),
+      ...DEFAULT_INCOME_CATEGORIES.map((name) => ({
+        name,
+        type: "INCOME" as const,
+      })),
+    ];
+
+    await this.categoryRepository.createDefaultCategories(
+      companyId,
+      categoryInputs,
+    );
+
+    // Save company (without user association for now - that's handled separately via addUser)
+    await this.companyRepository.create(company);
+
+    return {
+      companyId,
+      categoryIds: [], // Category IDs would need to be returned from createDefaultCategories
+    };
   }
 }

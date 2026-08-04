@@ -1,10 +1,16 @@
 import { Entity } from "../../shared/domain/entity.js";
 
 /**
- * Company type enumeration (re-exported for convenience).
+ * Company type enumeration for the company entity.
  */
-export type { CompanyTypeValue } from "./company-type.js";
-import { CompanyType, type CompanyTypeValue } from "./company-type.js";
+export type CompanyTypeValue = "INDIVIDUAL" | "CORPORATE";
+
+// Re-export Brazilian company types for external use (if needed)
+export type { CompanyTypeValue as BrazilianCompanyType } from "./company-type.js";
+import {
+  CompanyType,
+  type CompanyTypeValue as BrazilianCompanyTypeValue,
+} from "./company-type.js";
 
 /**
  * Domain events for Company entity.
@@ -30,6 +36,23 @@ export function createUserAddedToCompany(
     userId,
     profileId,
   };
+}
+
+/**
+ * Input for creating a new company.
+ */
+export interface CreateCompanyInput {
+  name: string;
+  type: CompanyTypeValue;
+  defaultCurrency?: string;
+}
+
+/**
+ * Result of creating a company with default categories.
+ */
+export interface CreateCompanyResult {
+  companyId: string;
+  categoryIds: string[];
 }
 
 /**

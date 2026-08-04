@@ -1,4 +1,7 @@
-import { DomainError } from "../../shared/domain/domain-error.js";
+import type { DomainError } from "../../shared/domain/domain-error.js";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-assignment
+const bcrypt = require("bcrypt");
 
 /**
  * Password Service interface for hashing and verifying passwords.
@@ -19,15 +22,14 @@ export interface PasswordService {
  * Bcrypt-based password service implementation.
  */
 class BcryptPasswordService implements PasswordService {
-  private bcrypt = require("bcrypt");
+  private readonly saltRounds = 12;
 
   async hash(password: string): Promise<string> {
-    const saltRounds = 12;
-    return this.bcrypt.hash(password, saltRounds);
+    return bcrypt.hash(password, this.saltRounds);
   }
 
   async verify(plainText: string, hashed: string): Promise<boolean> {
-    return this.bcrypt.compare(plainText, hashed);
+    return bcrypt.compare(plainText, hashed);
   }
 }
 

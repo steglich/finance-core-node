@@ -27,17 +27,17 @@
 - [x] 3.4 Implementar entidade `Profile` (id, companyId, name, permissions[])
 - [x] 3.5 Implementar entidade `Permission` (resource, action)
 - [x] 3.6 Implementar `User.create()` com validação de email único e hash de senha
-- [ ] 3.7 Implementar `Company.create()` com geração de categorias padrão
+- [x] 3.7 Implementar `Company.create()` com geração de categorias padrão
 - [x] 3.8 Implementar `Company.addUser(userId, profileId)` e `Company.removeUser(userId)`
 - [x] 3.9 Implementar eventos de domínio: `UserRegistered`, `UserAddedToCompany`
 
 ## 4. Identity — Infraestrutura
 
-- [ ] 4.1 Implementar `UserRepository` (create, findByEmail, findById, update)
-- [ ] 4.2 Implementar `CompanyRepository` (create, findById, findByUserId, addUser, removeUser)
-- [ ] 4.3 Implementar `ProfileRepository` (create, findById, findByCompanyId, update, delete)
-- [ ] 4.4 Implementar `JwtTokenService` (generateAccessToken, generateRefreshToken, verify, decode)
-- [ ] 4.5 Implementar `PasswordService` (hash com bcrypt/argon2, verify)
+- [x] 4.1 Implementar `UserRepository` (create, findByEmail, findById, update)
+- [x] 4.2 Implementar `CompanyRepository` (create, findById, findByUserId, addUser, removeUser)
+- [x] 4.3 Implementar `ProfileRepository` (create, findById, findByCompanyId, update, delete)
+- [x] 4.4 Implementar `JwtTokenService` (generateAccessToken, generateRefreshToken, verify, decode)
+- [x] 4.5 Implementar `PasswordService` (hash com bcrypt/argon2, verify)
 
 ## 5. Identity — API
 
