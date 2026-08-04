@@ -1,0 +1,146 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "autoupdate": true,
+    "instructions": [
+        "RULES.md",
+        "AGENTS.md"
+    ],
+    "permission": {
+        "edit": "allow",
+        "write": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow",
+        "read": "allow",
+        "skill": "allow",
+        "question": "allow",
+        "grep": "allow",
+        "todowrite": "allow"
+    },
+    "tools": {
+        "write": true,
+        "bash": true,
+        "webfetch": true,
+        "edit": true,
+        "read": true,
+        "websearch": true,
+        "skill": true,
+        "question": true,
+        "grep": true,
+        "todowrite": true
+    },
+    "watcher": {
+        "ignore": [
+            "node_modules/**",
+            "dist/**",
+            ".git/**",
+            ".vscode/**",
+            "**/.opencode/**",
+            ".claude/**",
+            ".idea/**",
+            ".history/**",
+            "**/*.log",
+            "**/*.lock",
+            "config/**",
+            "models/**",
+            "seeders/**",
+            "migrations/**"
+        ]
+    },
+    "provider": {
+        "openrouter": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "OpenRouter",
+            "options": {
+                "baseURL": "https://openrouter.ai",
+                "apiKey": "ENV:OPENROUTER_API_KEY"
+            },
+            "models": {
+                "deepseek/deepseek-v4-flash": {
+                    "tools": true
+                },
+                "qwen/qwen3-coder-flash": {
+                    "tools": true
+                }
+            }
+        },
+        "ollama": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "Ollama (local)",
+            "options": {
+                "baseURL": "http://localhost:11434/v1"
+            },
+            "models": {
+                "laguna-xs-1m:latest": {
+                    "temperature": true,
+                    "options": {
+                        "temperature": 0.3,
+                        "num_ctx": 256000,
+                        "num_thread": 8,
+                        "repeat_penalty": 1.1,
+                        "num_predict": -1,
+                        "top_p": 0.85,
+                        "top_k": 40
+                    }
+                },
+                "laguna-xs-2.1-256k:latest": {
+                    "temperature": true,
+                    "options": {
+                        "temperature": 0.3,
+                        "num_ctx": 256000,
+                        "num_thread": 8,
+                        "repeat_penalty": 1.1,
+                        "num_predict": -1,
+                        "top_p": 0.85,
+                        "top_k": 40
+                    }
+                }
+            }
+        }
+    },
+    "agent": {
+        "build": {
+            "mode": "primary",
+            "model": "ollama/laguna-xs-1m:latest",
+            "prompt": "Você é um desenvolvedor sênior de node.js e typescript. Deve se atentar para boas praticas de programação, node.js e typescript, segurança e performance. Deve implementar tudo que for pedido, se não tiver certeza se deve fazer algo pergunte, nunca faça algo sem ter certeza. Usar o mcp do Context7 para buscar informação sobre bibliotecas e dependencias. Crie agentes para trabalhar em conjunto",
+            "tools": {
+                "read": true,
+                "write": true,
+                "edit": true,
+                "bash": true
+            }
+        },
+        "plan": {
+            "mode": "primary",
+            "model": "ollama/laguna-xs-1m:latest",
+            "prompt": "Você é um desenvolvedor sênior de node.js e typescript. Crie um plano de implementação baseado em evidências para implementar tudo que for pedido, se não tiver certeza se deve fazer algo pergunte, nunca faça algo sem ter certeza. Usar o mcp do Context7 para buscar informação sobre bibliotecas e dependencias.",
+            "tools": {
+                "read": true,
+                "write": true,
+                "edit": false,
+                "bash": true
+            }
+        }
+    },
+    "formatter": {
+        "prettier": {
+            "disabled": true
+        },
+        "custom-prettier": {
+            "command": [
+                "npx",
+                "prettier",
+                "--write",
+                "$FILE"
+            ],
+            "environment": {
+                "NODE_ENV": "development"
+            },
+            "extensions": [
+                ".js",
+                ".ts",
+                ".json"
+            ]
+        }
+    }
+}
