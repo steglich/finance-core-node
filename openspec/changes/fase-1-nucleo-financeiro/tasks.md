@@ -41,22 +41,22 @@
 
 ## 5. Identity — API
 
-- [ ] 5.1 Criar `POST /api/v1/auth/register` — registro de usuário (retorna tokens)
-- [ ] 5.2 Criar `POST /api/v1/auth/login` — autenticação (retorna tokens + lista de empresas)
-- [ ] 5.3 Criar `POST /api/v1/auth/refresh` — renovação de access token via refresh token
-- [ ] 5.4 Criar `POST /api/v1/auth/recover-password` — solicitação de recuperação de senha
-- [ ] 5.5 Criar `POST /api/v1/auth/reset-password` — redefinição de senha com token
-- [ ] 5.6 Criar middleware `authMiddleware` — extrai e valida JWT, injeta `userId` e `companyId` no request context
-- [ ] 5.7 Criar middleware `requirePermission(permission)` — verifica permissão do perfil ativo
-- [ ] 5.8 Criar `POST /api/v1/companies` — criar empresa
-- [ ] 5.9 Criar `GET /api/v1/companies` — listar empresas do usuário
-- [ ] 5.10 Criar `PUT /api/v1/companies/:id/switch` — alternar empresa ativa (atualiza token)
-- [ ] 5.11 Criar `POST /api/v1/companies/:id/users` — convidar usuário
-- [ ] 5.12 Criar `DELETE /api/v1/companies/:id/users/:userId` — remover usuário
-- [ ] 5.13 Criar `GET /api/v1/profiles` — listar perfis da empresa
-- [ ] 5.14 Criar `POST /api/v1/profiles` — criar perfil
-- [ ] 5.15 Criar `PUT /api/v1/profiles/:id` — editar perfil
-- [ ] 5.16 Criar `DELETE /api/v1/profiles/:id` — excluir perfil
+- [x] 5.1 Criar `POST /api/v1/auth/register` — registro de usuário (retorna tokens)
+- [x] 5.2 Criar `POST /api/v1/auth/login` — autenticação (retorna tokens + lista de empresas)
+- [x] 5.3 Criar `POST /api/v1/auth/refresh` — renovação de access token via refresh token
+- [x] 5.4 Criar `POST /api/v1/auth/recover-password` — solicitação de recuperação de senha
+- [x] 5.5 Criar `POST /api/v1/auth/reset-password` — redefinição de senha com token
+- [x] 5.6 Criar middleware `authMiddleware` — extrai e valida JWT, injeta `userId` e `companyId` no request context
+- [x] 5.7 Criar middleware `requirePermission(permission)` — verifica permissão do perfil ativo
+- [x] 5.8 Criar `POST /api/v1/companies` — criar empresa
+- [x] 5.9 Criar `GET /api/v1/companies` — listar empresas do usuário
+- [x] 5.10 Criar `PUT /api/v1/companies/:id/switch` — alternar empresa ativa (atualiza token)
+- [x] 5.11 Criar `POST /api/v1/companies/:id/users` — convidar usuário
+- [x] 5.12 Criar `DELETE /api/v1/companies/:id/users/:userId` — remover usuário
+- [x] 5.13 Criar `GET /api/v1/profiles` — listar perfis da empresa
+- [x] 5.14 Criar `POST /api/v1/profiles` — criar perfil
+- [x] 5.15 Criar `PUT /api/v1/profiles/:id` — editar perfil
+- [x] 5.16 Criar `DELETE /api/v1/profiles/:id` — excluir perfil
 
 ## 6. Financeiro — Domínio (Value Objects e Entidades Base)
 

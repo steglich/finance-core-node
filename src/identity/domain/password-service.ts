@@ -1,7 +1,5 @@
 import type { DomainError } from "../../shared/domain/domain-error.js";
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-assignment
-const bcrypt = require("bcrypt");
+import bcrypt from "bcrypt";
 
 /**
  * Password Service interface for hashing and verifying passwords.
