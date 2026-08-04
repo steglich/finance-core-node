@@ -22,6 +22,16 @@ Este documento define as regras, convenções e padrões que todo agente de IA d
 | `node` | Execução em produção (`npm start`) |
 
 **Nenhuma dependência externa** deve ser adicionada sem antes perguntar.
+- **Sempre instale dependências com versão exata** (fixa, sem `^` ou `~`). Isso trava a versão usada e previne Supply Chain Attacks — uma dependência comprometida não será atualizada silenciosamente.
+  ```bash
+  # ✅ Correto — versão exata
+  npm install --save-exact dotenv
+
+  # ❌ Errado — salva com ^ por padrão (range)
+  npm install dotenv
+  ```
+- No `package.json`, toda dependência deve usar versão fixa: `"pkg": "1.2.3"`, nunca `"pkg": "^1.2.3"` ou `"pkg": "~1.2.3"`.
+- Para atualizar uma dependência fixa para uma versão específica, use `npm install --save-exact pkg@1.2.4`.
 
 ---
 

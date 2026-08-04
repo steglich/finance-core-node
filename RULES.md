@@ -48,6 +48,8 @@ Este documento define as regras de comportamento, permissões e restrições que
 | `.gitignore` | Apenas quando necessário e justificado |
 | `*.md` na raiz | Documentação do projeto — apenas quando solicitado |
 
+**Regra adicional para `package.json`:** ao adicionar ou atualizar dependências, **sempre use versão exata** (fixa, sem `^` ou `~`). Nunca adicione dependências com version range. Isso previne Supply Chain Attacks ao garantir que uma versão comprometida não seja puxada automaticamente em futuras instalações.
+
 ### 2.3 Arquivos Bloqueados
 
 - `AGENTS.md` — editável apenas quando solicitado explicitamente

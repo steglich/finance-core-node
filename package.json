@@ -25,13 +25,13 @@
   },
   "homepage": "https://github.com/steglich/finance-core-node#readme",
   "dependencies": {
-    "dotenv": "^17.4.2",
-    "knex": "^3.3.0",
-    "pg": "^8.22.0"
+    "dotenv": "17.4.2",
+    "knex": "3.3.0",
+    "pg": "8.22.0"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "tsx": "^4.23.5",
-    "typescript": "^7.0.2"
+    "@types/node": "26.1.1",
+    "tsx": "4.23.1",
+    "typescript": "7.0.2"
   }
 }
