@@ -8,16 +8,16 @@
 
 ## 2. Banco de Dados e Migrations
 
-> **⚠️ Bloqueado até resolver Open Question #1 do design.md (banco de dados + query builder)**
+> **✅ Concluído:** PostgreSQL + Knex.js aprovado como solução para banco de dados e migrations.
 
-- [ ] 2.1 Configurar conexão com banco de dados e variáveis de ambiente (`DATABASE_URL`)
-- [ ] 2.2 Criar sistema de migrations
-- [ ] 2.3 Migration: `users`, `companies`, `company_users`, `profiles`, `permissions`, `profile_permissions`
-- [ ] 2.4 Migration: `wallets`, `accounts`, `categories`
-- [ ] 2.5 Migration: `transactions`, `installments`, `transaction_tags`, `transaction_attachments`
-- [ ] 2.6 Migration: `recurrences`
-- [ ] 2.7 Migration: `audit_entries`, `domain_event_logs`, `access_logs`
-- [ ] 2.8 Criar seed de categorias padrão para novas empresas
+- [x] 2.1 Configurar conexão com banco de dados e variáveis de ambiente (`DATABASE_URL`)
+- [x] 2.2 Criar sistema de migrations (Knex.js migrations + seeds)
+- [x] 2.3 Migration: `users`, `companies`, `company_users`, `profiles`, `permissions`, `profile_permissions`
+- [x] 2.4 Migration: `wallets`, `accounts`, `categories`
+- [x] 2.5 Migration: `transactions`, `installments`, `transaction_tags`, `transaction_attachments`
+- [x] 2.6 Migration: `recurrences`
+- [x] 2.7 Migration: `audit_entries`, `domain_event_logs`, `access_logs`
+- [x] 2.8 Criar seed de categorias padrão para novas empresas
 
 ## 3. Identity — Domínio
 

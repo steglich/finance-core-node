@@ -1,8 +1,9 @@
 import type { Logger } from "./logger.js";
+import knexLib from "knex";
+import type { Knex } from "knex";
 
 /**
  * Database connection interface.
- * Concrete implementations will use Knex, Drizzle, or other query builders after approval.
  */
 export interface DatabaseConnection {
   /**
@@ -24,6 +25,11 @@ export interface DatabaseConnection {
    * Closes the connection.
    */
   close(): Promise<void>;
+
+  /**
+   * Returns the Knex instance for advanced queries.
+   */
+  getKnex(): Knex;
 }
 
 /**
@@ -50,44 +56,86 @@ export interface Transaction {
  * Creates a database connection from environment configuration.
  * Uses DATABASE_URL environment variable.
  */
-export function createDatabaseConnection(): DatabaseConnection {
+export function createDatabaseConnection(logger: Logger): DatabaseConnection {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     throw new Error("DATABASE_URL environment variable is required");
   }
 
-  // This will be implemented with Knex after approval
-  return new NoOpDatabaseConnection(databaseUrl);
+  return new KnexDatabaseConnection(databaseUrl, logger);
 }
 
 /**
- * No-op implementation for development before database dependency is approved.
+ * Knex-based implementation of DatabaseConnection.
  */
-class NoOpDatabaseConnection implements DatabaseConnection {
-  private readonly url: string;
+class KnexDatabaseConnection implements DatabaseConnection {
+  private readonly knex: Knex;
   private _isConnected = false;
 
-  constructor(url: string) {
-    this.url = url;
+  constructor(
+    databaseUrl: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _logger: Logger,
+  ) {
+    this.knex = knexLib({
+      client: "pg",
+      connection: databaseUrl,
+      migrations: {
+        directory: "./migrations",
+        tableName: "knex_migrations",
+      },
+    });
   }
 
-  async raw(_query: string, _params?: unknown[]): Promise<unknown[]> {
-    throw new Error(
-      "Database not configured. Install Knex after dependency approval.",
-    );
+  async raw(query: string, params?: unknown[]): Promise<unknown[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = await this.knex.raw(query, params as any);
+    if (Array.isArray(result)) {
+      return (result[0] as unknown[] | undefined) ?? [];
+    }
+    return ((result as { rows?: unknown[] }).rows as unknown[]) ?? [];
   }
 
-  async transaction<T>(_fn: (trx: Transaction) => Promise<T>): Promise<T> {
-    throw new Error(
-      "Database not configured. Install Knex after dependency approval.",
-    );
+  async transaction<T>(fn: (trx: Transaction) => Promise<T>): Promise<T> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.knex.transaction(async (trx: any) => {
+      const tx: Transaction = {
+        raw: async (query: string, params?: unknown[]) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const result: any = await trx.raw(query, params);
+          if (Array.isArray(result)) {
+            return (result[0] as unknown[] | undefined) ?? [];
+          }
+          return ((result as { rows?: unknown[] }).rows as unknown[]) ?? [];
+        },
+        commit: async () => {
+          // Knex handles commit automatically on successful resolution
+        },
+        rollback: async () => {
+          throw new Error("Manual rollback triggered");
+        },
+      };
+      return fn(tx);
+    }) as Promise<T>;
   }
 
   async isConnected(): Promise<boolean> {
-    return this._isConnected;
+    try {
+      await this.knex.raw("SELECT 1");
+      this._isConnected = true;
+      return true;
+    } catch {
+      this._isConnected = false;
+      return false;
+    }
   }
 
   async close(): Promise<void> {
+    await this.knex.destroy();
     this._isConnected = false;
+  }
+
+  getKnex(): Knex {
+    return this.knex;
   }
 }
