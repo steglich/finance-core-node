@@ -1,10 +1,10 @@
 ## 1. Fundação — Domínio Compartilhado
 
-- [ ] 1.1 Criar `src/shared/domain/` com classes base: `Entity<TId>`, `ValueObject`, `AggregateRoot<TId>`, `DomainEvent`
-- [ ] 1.2 Criar `src/shared/domain/DomainError.ts` — classe de erro de domínio com código e mensagem
-- [ ] 1.3 Criar `src/shared/domain/DomainEventBus.ts` — barramento de eventos in-process tipado com `publish()` e `subscribe()`
-- [ ] 1.4 Criar `src/shared/domain/BaseRepository.ts` — interface genérica de repositório com filtro automático por `companyId`
-- [ ] 1.5 Criar `src/shared/infrastructure/` — implementações base (conexão de banco, logger)
+- [x] 1.1 Criar `src/shared/domain/` com classes base: `Entity<TId>`, `ValueObject`, `AggregateRoot<TId>`, `DomainEvent`
+- [x] 1.2 Criar `src/shared/domain/DomainError.ts` — classe de erro de domínio com código e mensagem
+- [x] 1.3 Criar `src/shared/domain/DomainEventBus.ts` — barramento de eventos in-process tipado com `publish()` e `subscribe()`
+- [x] 1.4 Criar `src/shared/domain/BaseRepository.ts` — interface genérica de repositório com filtro automático por `companyId`
+- [x] 1.5 Criar `src/shared/infrastructure/` — implementações base (conexão de banco, logger)
 
 ## 2. Banco de Dados e Migrations
 
