@@ -10,6 +10,8 @@ Este documento define as regras, convenções e padrões que todo agente de IA d
 - **Runtime:** Node.js (ESM)
 - **Linguagem:** TypeScript 7.x (strict mode)
 - **Licença:** AGPL-3.0
+- **Arquitetura:** DDD por bounded context, sem framework HTTP e sem container de DI
+- **Persistência:** PostgreSQL via Knex (query builder + migrations + seeds)
 
 ---
 
@@ -20,6 +22,14 @@ Este documento define as regras, convenções e padrões que todo agente de IA d
 | `tsx` | Dev server com hot-reload (`npm run dev`) |
 | `tsc` | Compilação TypeScript (`npm run build`) |
 | `node` | Execução em produção (`npm start`) |
+| `knex` | Migrations e seeds (`npm run db:*`) — client `pg` |
+| `bcrypt` | Hash de senha (`PasswordService`) |
+| `jsonwebtoken` | Access/refresh tokens (`JwtTokenService`) |
+| `dotenv` | Carrega `.env` no `src/index.ts` |
+
+Não há framework HTTP (Express/Fastify), ORM, biblioteca de validação (Zod) nem
+test runner. O servidor usa `node:http` puro, as queries usam Knex direto e a
+validação de entrada é feita à mão em `dtos.ts`. Mantenha esse padrão.
 
 **Nenhuma dependência externa** deve ser adicionada sem antes perguntar.
 - **Sempre instale dependências com versão exata** (fixa, sem `^` ou `~`). Isso trava a versão usada e previne Supply Chain Attacks — uma dependência comprometida não será atualizada silenciosamente.
@@ -69,21 +79,80 @@ O `tsconfig.json` é **restritivo por design**. Siga estas regras:
 
 ```
 src/
-├── index.ts          # Entry point — apenas inicializa o AppServer
-├── app.server.ts     # Classe AppServer — toda a implementação do servidor
-└── ...
-dist/                 # Output compilado (gerado pelo tsc — NUNCA edite manualmente)
+├── index.ts            # Entry point — carrega .env e sobe o AppServer
+├── app.server.ts       # AppServer — composition root + servidor node:http
+├── knexfile.ts         # Config do Knex (migrations/, seeds/, DATABASE_URL)
+├── migrations/         # Migrations Knex (identity → finance → transaction → audit)
+├── seeds/              # Dados padrão e categorias padrão
+├── routes/             # Roteador próprio + definição de rotas por contexto
+├── shared/             # Primitivas de domínio e infraestrutura transversal
+│   ├── domain/         # Entity, AggregateRoot, ValueObject, Result, DomainError, DomainEventBus
+│   └── infrastructure/ # DatabaseConnection (Knex), Logger
+├── identity/           # Bounded context: usuários, empresas, perfis, auth
+│   ├── domain/         # Entidades, VOs (Email, Cpf, Cnpj, Password) e services
+│   ├── infrastructure/ # Interfaces de repositório + implementações Knex, JwtTokenService
+│   └── api/            # Controllers, DTOs/validação, middlewares
+└── financeiro/         # Bounded context: categorias (em construção)
+    ├── domain/
+    └── infrastructure/
+dist/                   # Output compilado (gerado pelo tsc — NUNCA edite manualmente)
+openspec/               # Specs e mudanças (fluxo spec-driven; fase atual em changes/)
 ```
 
-### Padrão: Separação de Entry Point e Implementação
+### Camadas de um Bounded Context
 
-- **`index.ts`**: responsabilidade única — instanciar e iniciar o servidor. O mais enxuto possível.
-- **`app.server.ts`**: classe `AppServer` com toda a lógica de configuração, rotas e middlewares. Novos recursos devem ser adicionados aqui ou em arquivos importados por ele.
+Cada contexto (`identity/`, `financeiro/`) segue a mesma divisão. A dependência
+aponta sempre para dentro: `api` → `domain` ← `infrastructure`.
+
+- **`domain/`** — entidades, aggregate roots, value objects e domain services.
+  Sem Knex, sem `node:http`, sem env. É onde as regras de negócio vivem.
+- **`infrastructure/`** — a *interface* do repositório (`user-repository.ts`) e a
+  implementação Knex (`knex-user-repository.ts`) ficam lado a lado. O domínio e
+  os controllers dependem da interface, nunca da implementação.
+- **`api/`** — controllers que recebem `IncomingMessage` e retornam
+  `{ statusCode, body }`; DTOs com funções `validateXRequest`; middlewares.
+  Controllers não escrevem na resposta — quem faz isso é a rota.
+
+### Padrões Obrigatórios
+
+- **`Result<T>` em vez de exceptions no domínio.** Use `Result.success(v)` /
+  `Result.failed(DomainError.create("VALIDATION_ERROR", "..."))`. Só use
+  `throw` em boundaries de infraestrutura. Os códigos válidos estão em
+  `DomainErrorCode` — adicione um novo lá antes de usar.
+- **Multi-tenancy é invariante de repositório.** `BaseRepository` expõe
+  `readonly companyId` e toda implementação **deve** filtrar por ele. Nunca
+  confie no controller para aplicar o escopo de empresa.
+- **Aggregate roots acumulam eventos** via `raiseEvent()`; quem persiste publica
+  e chama `clearEvents()`.
+- **Value objects são imutáveis** e implementam `compareValues()` + `toJSON()`.
+- **Validação de entrada é manual**, em `api/dtos.ts`, retornando
+  `ApiResult<T>` (`{ success: true, data }` | `{ success: false, error }`).
+
+### Composition Root
+
+Não existe container de DI. Tudo é instanciado à mão em
+`AppServer.initialize()`, na ordem: `DatabaseConnection` → repositórios (recebem
+o `Knex`) → services → controllers. Ao criar um recurso novo, registre-o ali e
+injete via construtor.
+
+### Rotas
+
+O roteador é próprio (`src/routes/index.ts`): `createRoutes()` monta o array e
+`handleRoute()` percorre em ordem, casando `method` + `matchPath()` (suporta
+`:param`, mas **não** extrai os valores — o controller lê o `req.url`).
+
+- **A ordem importa:** rotas mais específicas primeiro.
+- Rotas novas vão em `src/routes/<contexto>-routes.ts`, com uma factory
+  `createXRoutes(controller)`, e são registradas em `createRoutes()`.
+- Prefixo padrão: `/api/v1/...`.
+- Rotas protegidas usam `AuthMiddleware`, que valida o Bearer token e injeta
+  `RequestContext { userId, companyId }`.
 
 ### Para Novos Recursos
-- Crie módulos em `src/` com nomes descritivos
+- Novo conceito de negócio → comece pelo `domain/` do contexto correspondente
+- Precisa de tabela → crie uma migration em `src/migrations/` (nunca edite uma já aplicada)
 - Use classes ou funções puras — seja consistente com o que já existe no módulo
-- Sempre exporte tipos/interfaces relevantes
+- Sempre exporte tipos/interfaces relevantes (`shared/domain/index.ts` é o barrel das primitivas)
 
 ---
 
@@ -120,9 +189,39 @@ dist/                 # Output compilado (gerado pelo tsc — NUNCA edite manual
 ## Fluxo de Trabalho
 
 ```bash
-npm run dev     # Desenvolvimento com hot-reload (porta 3000)
-npm run build   # Compilar TypeScript para dist/
-npm start       # Rodar em produção (compilado)
+npm run dev                  # Desenvolvimento com hot-reload (porta 3000)
+npm run build                # Compilar TypeScript para dist/
+npm start                    # Rodar em produção (compilado)
+
+npm run db:migrate           # Aplicar migrations pendentes
+npm run db:migrate:rollback  # Reverter o último batch
+npm run db:seed              # Rodar os seeds de src/seeds/
 ```
 
 A porta padrão do servidor é `3000`.
+
+### Variáveis de Ambiente
+
+Lidas de `.env` (carregado por `dotenv` no `src/index.ts`):
+
+| Variável | Uso |
+|---|---|
+| `DATABASE_URL` | Conexão Postgres — obrigatória para o servidor e para os comandos `db:*` |
+| `PORT` | Porta HTTP (default `3000`) |
+| `NODE_ENV` | Ambiente |
+| `JWT_SECRET` | Assinatura dos tokens (access 15m, refresh 7d) |
+
+### Testes
+
+**Ainda não há test runner configurado** — `npm test` é um stub que falha. Não
+invente comandos de teste; se um teste for necessário, pergunte antes qual
+runner adotar.
+
+---
+
+## Fluxo Spec-Driven (OpenSpec)
+
+Mudanças são planejadas em `openspec/` antes de virar código. Cada mudança tem
+`proposal.md`, `design.md`, `tasks.md` e specs por capability em
+`specs/<capability>/spec.md`. Ao implementar, siga as tasks da mudança ativa e
+mantenha as specs coerentes com o que foi construído.
