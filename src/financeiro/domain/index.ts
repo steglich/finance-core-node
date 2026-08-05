@@ -14,12 +14,21 @@ export {
   AccountDebited,
   AccountInitialBalanceRecorded,
 } from "./account-events.js";
-export { Category } from "./category.js";
-export type { CategoryType } from "./category.js";
+export { Category, ensureOnlyClassificationChanged } from "./category.js";
+export type {
+  CategorizableTransaction,
+  CategoryDependencies,
+  CategoryProps,
+  CategoryType,
+  CreateCategoryInput,
+  EditCategoryInput,
+} from "./category.js";
 export {
   DEFAULT_EXPENSE_CATEGORIES,
   DEFAULT_INCOME_CATEGORIES,
 } from "./category.js";
+export { CategoryHierarchy } from "./category-hierarchy.js";
+export type { CategoryNode } from "./category-hierarchy.js";
 export {
   SUPPORTED_CURRENCIES,
   isSupportedCurrency,

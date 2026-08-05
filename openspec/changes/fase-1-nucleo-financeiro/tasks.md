@@ -71,10 +71,10 @@
 
 ## 7. Financeiro — Domínio (Categorias)
 
-- [ ] 7.1 Implementar entidade `Category` — com hierarquia (parentId), tipo (EXPENSE/INCOME), cor, ícone
-- [ ] 7.2 Implementar `Category.moveTo(newParentId)` — validação de não-circularidade
-- [ ] 7.3 Implementar `Category.delete()` — bloqueia se houver transações ou subcategorias vinculadas
-- [ ] 7.4 Implementar invariante RN-06 (categorias não alteram comportamento financeiro)
+- [x] 7.1 Implementar entidade `Category` — com hierarquia (parentId), tipo (EXPENSE/INCOME), cor, ícone
+- [x] 7.2 Implementar `Category.moveTo(newParentId)` — validação de não-circularidade
+- [x] 7.3 Implementar `Category.delete()` — bloqueia se houver transações ou subcategorias vinculadas
+- [x] 7.4 Implementar invariante RN-06 (categorias não alteram comportamento financeiro)
 
 ## 8. Financeiro — Domínio (Transações)
 

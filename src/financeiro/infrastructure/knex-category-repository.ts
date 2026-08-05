@@ -3,6 +3,23 @@ import type { CategoryRepository } from "./category-repository.js";
 import { Category, type CategoryType } from "../domain/category.js";
 
 /**
+ * Maps a `categories` row into the Category entity.
+ */
+function toCategory(row: Record<string, unknown>): Category {
+  return new Category({
+    id: row.id as string,
+    companyId: row.company_id as string,
+    name: row.name as string,
+    type: (row.type as CategoryType) || "EXPENSE",
+    parentId: (row.parent_id as string | null) ?? undefined,
+    color: (row.color as string | null) ?? undefined,
+    icon: (row.icon as string | null) ?? undefined,
+    isDefault: Boolean(row.is_default),
+    createdAt: new Date(row.created_at as string),
+  });
+}
+
+/**
  * Knex-based implementation of CategoryRepository.
  */
 export class KnexCategoryRepository implements CategoryRepository {
@@ -14,7 +31,10 @@ export class KnexCategoryRepository implements CategoryRepository {
       company_id: category.companyId,
       name: category.name,
       type: category.type,
-      parent_id: category.parentId || null,
+      color: category.color ?? null,
+      icon: category.icon ?? null,
+      parent_id: category.parentId ?? null,
+      is_default: category.isDefault,
       created_at: category.createdAt,
       updated_at: new Date(),
     });
@@ -25,15 +45,7 @@ export class KnexCategoryRepository implements CategoryRepository {
 
     if (!row) return null;
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    return new Category(
-      row.id as string,
-      row.company_id as string,
-      row.name as string,
-      (row.type as CategoryType) || "EXPENSE",
-      row.parent_id as string | undefined,
-      new Date(row.created_at as string),
-    );
+    return toCategory(row as Record<string, unknown>);
   }
 
   async findByCompanyId(companyId: string): Promise<Category[]> {
@@ -41,17 +53,7 @@ export class KnexCategoryRepository implements CategoryRepository {
       .where("company_id", companyId)
       .orderBy("created_at", "desc");
 
-    return rows.map((row) => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      return new Category(
-        row.id as string,
-        row.company_id as string,
-        row.name as string,
-        (row.type as CategoryType) || "EXPENSE",
-        row.parent_id as string | undefined,
-        new Date(row.created_at as string),
-      );
-    });
+    return rows.map((row) => toCategory(row as Record<string, unknown>));
   }
 
   async findByParentId(
@@ -62,17 +64,7 @@ export class KnexCategoryRepository implements CategoryRepository {
       .where({ company_id: companyId, parent_id: parentId })
       .orderBy("created_at", "desc");
 
-    return rows.map((row) => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      return new Category(
-        row.id as string,
-        row.company_id as string,
-        row.name as string,
-        (row.type as CategoryType) || "EXPENSE",
-        row.parent_id as string | undefined,
-        new Date(row.created_at as string),
-      );
-    });
+    return rows.map((row) => toCategory(row as Record<string, unknown>));
   }
 
   async update(category: Category): Promise<void> {
@@ -80,7 +72,10 @@ export class KnexCategoryRepository implements CategoryRepository {
       .where("id", category.id)
       .update({
         name: category.name,
-        parent_id: category.parentId || null,
+        type: category.type,
+        color: category.color ?? null,
+        icon: category.icon ?? null,
+        parent_id: category.parentId ?? null,
         updated_at: new Date(),
       });
   }
