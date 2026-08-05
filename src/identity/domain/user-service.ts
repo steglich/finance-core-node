@@ -6,7 +6,7 @@ import type { PasswordService } from "./password-service.js";
 import type { CategoryRepository } from "../../financeiro/infrastructure/category-repository.js";
 import type { CreateCompanyInput, CreateCompanyResult } from "./company.js";
 import { User, type UserStatus } from "./user.js";
-import { Email } from "./email.js";
+import { Email } from "../../shared/domain/email.js";
 import { CompanyType } from "./company-type.js";
 import {
   DEFAULT_EXPENSE_CATEGORIES,

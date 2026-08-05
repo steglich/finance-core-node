@@ -8,6 +8,8 @@ import { KnexRecurrenceRepository } from "./financeiro/infrastructure/knex-recur
 import { KnexTransactionRepository } from "./financeiro/infrastructure/knex-transaction-repository.js";
 import { KnexInvoiceRepository } from "./financeiro/infrastructure/knex-invoice-repository.js";
 import { KnexBudgetRepository } from "./financeiro/infrastructure/knex-budget-repository.js";
+import { KnexChargeRepository } from "./pagamentos/infrastructure/knex-charge-repository.js";
+import { KnexPayableRepository } from "./pagamentos/infrastructure/knex-payable-repository.js";
 import { InvoiceClosingService } from "./financeiro/domain/invoice-closing-service.js";
 import { KnexAuditRepository, KnexDomainEventLogRepository } from "./auditoria/infrastructure/knex-audit-repository.js";
 import { registerAuditHandlers } from "./auditoria/infrastructure/audit-event-handlers.js";
@@ -22,7 +24,9 @@ import { createLogger } from "./shared/infrastructure/logger.js";
  * 2. flags pending installments whose due date has passed;
  * 3. closes the invoices whose closing date has been reached;
  * 4. flags overdue invoices;
- * 5. closes the budget periods that have ended.
+ * 5. closes the budget periods that have ended;
+ * 6. flags overdue charges;
+ * 7. flags overdue payables.
  *
  * Every pass is idempotent through the aggregates' own state machines: a second
  * run on the same day finds the state already advanced, fails harmlessly and
@@ -41,6 +45,8 @@ async function run(referenceDate: Date): Promise<void> {
   const accountRepository = new KnexAccountRepository(knex);
   const invoiceRepository = new KnexInvoiceRepository(knex);
   const budgetRepository = new KnexBudgetRepository(knex);
+  const chargeRepository = new KnexChargeRepository(knex);
+  const payableRepository = new KnexPayableRepository(knex);
   const auditRepository = new KnexAuditRepository(knex);
   const eventLogRepository = new KnexDomainEventLogRepository(knex);
 
@@ -235,12 +241,66 @@ async function run(referenceDate: Date): Promise<void> {
       }
     }
 
+    // Charges and payables share the shape: the aggregate refuses the second
+    // transition, and the status-guarded UPDATE refuses a row another process
+    // already moved — so a re-run on the same day changes nothing and publishes
+    // nothing.
+    let overdueCharges = 0;
+
+    for (const charge of await chargeRepository.findOverdueCandidates(
+      referenceDate,
+    )) {
+      const result = charge.markOverdue(referenceDate);
+      if (result.isFailure) {
+        continue;
+      }
+
+      try {
+        await chargeRepository.update(charge);
+        for (const event of charge.events) {
+          eventBus.publish(event);
+        }
+        charge.clearEvents();
+        overdueCharges += 1;
+      } catch (error) {
+        logger.error(
+          `Failed to flag charge ${charge.id} as overdue: ${String(error)}`,
+        );
+      }
+    }
+
+    let overduePayables = 0;
+
+    for (const payable of await payableRepository.findOverdueCandidates(
+      referenceDate,
+    )) {
+      const result = payable.markOverdue(referenceDate);
+      if (result.isFailure) {
+        continue;
+      }
+
+      try {
+        await payableRepository.update(payable);
+        for (const event of payable.events) {
+          eventBus.publish(event);
+        }
+        payable.clearEvents();
+        overduePayables += 1;
+      } catch (error) {
+        logger.error(
+          `Failed to flag payable ${payable.id} as overdue: ${String(error)}`,
+        );
+      }
+    }
+
     logger.info("Scheduler pass complete", {
       generatedTransactions: generated,
       overdueInstallments: overdue,
       closedInvoices,
       overdueInvoices,
       closedBudgets,
+      overdueCharges,
+      overduePayables,
     });
   } finally {
     await database.close();

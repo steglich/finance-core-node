@@ -19,6 +19,8 @@ export interface TransactionFilter {
   parentTransactionId?: string | undefined;
   cardId?: string | undefined;
   invoiceId?: string | undefined;
+  costCenterId?: string | undefined;
+  personId?: string | undefined;
   tag?: string | undefined;
   limit?: number | undefined;
   offset?: number | undefined;

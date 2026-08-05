@@ -82,6 +82,8 @@ As Fases 1 e 2 estão implementadas e arquivadas. O projeto já tem: `shared/dom
 
 **Racional:** é a decisão 10 da Fase 2 aplicada de novo — agregação é trabalho do banco, e um total persistido viraria segunda fonte de verdade a reconciliar. Multa e juros das cobranças vencidas são calculados na projeção usando a mesma fórmula do domínio (ver decisão 7).
 
+**Ajuste feito na implementação:** as linhas e os valores já liquidados são agregados em SQL, mas multa e juros são calculados chamando as próprias funções de `charge-math.ts`, não reescrevendo a fórmula em SQL. "A mesma fórmula do domínio" é literalmente a mesma função: duas implementações da regra dariam ao sistema duas versões para manter em sincronia, e a que diverge é sempre a cópia.
+
 ### 7. Multa e juros derivados por função pura, materializados só no recebimento
 
 **Decisão:** um módulo puro `pagamentos/domain/charge-math.ts` expõe `penaltyFor(original, penaltyPercent)` e `interestFor(original, monthlyPercent, daysLate)`, com `interest = original × monthlyPercent / 30 × daysLate`, arredondado a centavos por `Money`. `Charge` não persiste multa nem juros enquanto está em aberto; `ChargeService.amountsDueAt(charge, referenceDate)` devolve `{ original, penalty, interest, totalDue }`. No recebimento, os valores calculados **para a data do recebimento** são gravados em `charge_receipts` (`penalty_amount`, `interest_amount`) como registro histórico imutável.
@@ -159,12 +161,14 @@ await transactionRepository.runAtomic(async (executor) => {
 - `payable_payments` — `id`, `payable_id`, `transaction_id`, `account_id`, `amount(15,2)`, `paid_at`
 - `pix_payments` — conforme a decisão 12
 - `transactions`: colunas nullable `cost_center_id` e `person_id`, com FK
-- `budgets`: coluna nullable `cost_center_id`, com FK
+- `budgets`: coluna nullable `cost_center_id`, com FK, e `category_id` relaxada para nullable
 - Índices: `charges(company_id, status, due_date)`, `charges(company_id, person_id, status)`, `payables(company_id, status, due_date)`, `payables(company_id, person_id, status)`, `transactions(company_id, cost_center_id, status, date)`, `people(company_id, is_active)`
 
 **Racional:** `decimal(15,2)`, `defaultTo(gen_random_uuid())` e o `down()` na ordem inversa seguem o padrão das migrations existentes. Os índices de `charges`/`payables` sustentam a varredura diária do scheduler e os relatórios; o índice de `cost_center_id` em `transactions` sustenta o relatório e o filtro do dashboard pela nova dimensão.
 
 **Nota:** `external_reference` em `charges` já nasce reservado para o identificador do boleto quando a integração existir — coluna nullable, sem uso nesta fase.
+
+**Ajuste feito na implementação:** `budgets.category_id` era `NOT NULL` desde a Fase 2. Como a decisão 13 passa a invariante para "pelo menos uma dimensão", um orçamento só de centro de custo não caberia na coluna. A migration relaxa `category_id` para nullable — alargar uma coluna não rejeita nenhuma linha existente, então o passo é tão seguro quanto os aditivos. O `down()` apaga os orçamentos sem categoria antes de restaurar o `NOT NULL`; são dados da Fase 3, que o rollback descarta por definição.
 
 ### 15. Rotas
 

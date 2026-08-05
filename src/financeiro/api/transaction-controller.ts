@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { CostCenterRepository } from "../../cadastros/infrastructure/cost-center-repository.js";
+import type { PersonRepository } from "../../cadastros/infrastructure/person-repository.js";
 import type { ControllerResult } from "../../shared/api/controller-result.js";
 import { DomainError } from "../../shared/domain/domain-error.js";
 import type { DomainEventBus } from "../../shared/domain/domain-event-bus.js";
@@ -14,6 +16,8 @@ import type { CardRepository } from "../infrastructure/card-repository.js";
 import type { CategoryRepository } from "../infrastructure/category-repository.js";
 import type { InstallmentRepository } from "../infrastructure/installment-repository.js";
 import type { InvoiceRepository } from "../infrastructure/invoice-repository.js";
+import type { SettlementOriginChecker } from "../infrastructure/settlement-origin.js";
+import { NO_SETTLEMENT_ORIGIN } from "../infrastructure/settlement-origin.js";
 import type { TransactionRepository } from "../infrastructure/transaction-repository.js";
 import {
   validateAttachmentRequest,
@@ -36,8 +40,47 @@ export class TransactionController {
     private readonly cardRepository: CardRepository,
     private readonly invoiceRepository: InvoiceRepository,
     private readonly eventBus: DomainEventBus,
+    private readonly costCenterRepository?: CostCenterRepository,
+    private readonly personRepository?: PersonRepository,
+    private readonly settlementOrigin: SettlementOriginChecker = NO_SETTLEMENT_ORIGIN,
     private readonly invoiceAssignment: InvoiceAssignmentService = new InvoiceAssignmentService(),
   ) {}
+
+  /**
+   * Checks the Phase 3 classifications against the current company: the cost
+   * center must exist and still be active, the person must exist. Returns the
+   * error response to send, or undefined when both are fine.
+   */
+  private async validateDimensions(
+    companyId: string,
+    costCenterId: string | undefined,
+    personId: string | undefined,
+  ): Promise<ControllerResult | undefined> {
+    if (costCenterId && this.costCenterRepository) {
+      const costCenter = await this.costCenterRepository.findById(
+        companyId,
+        costCenterId,
+      );
+      if (!costCenter) {
+        return { statusCode: 404, body: { error: "Cost center not found" } };
+      }
+      if (!costCenter.isActive) {
+        return {
+          statusCode: 400,
+          body: { error: "Inactive cost centers cannot be selected" },
+        };
+      }
+    }
+
+    if (personId && this.personRepository) {
+      const person = await this.personRepository.findById(companyId, personId);
+      if (!person) {
+        return { statusCode: 404, body: { error: "Person not found" } };
+      }
+    }
+
+    return undefined;
+  }
 
   /**
    * POST /api/v1/transactions — simple or parceled.
@@ -74,10 +117,21 @@ export class TransactionController {
       }
     }
 
+    const dimensions = await this.validateDimensions(
+      companyId,
+      input.costCenterId,
+      input.personId,
+    );
+    if (dimensions) {
+      return dimensions;
+    }
+
     const result = Transaction.create({
       companyId,
       accountId: input.accountId,
       categoryId: input.categoryId,
+      costCenterId: input.costCenterId,
+      personId: input.personId,
       type: input.type,
       grossAmount: input.grossAmount,
       discount: input.discount,
@@ -235,6 +289,18 @@ export class TransactionController {
       return { statusCode: 404, body: { error: "Transaction not found" } };
     }
 
+    // A transaction produced by settling a charge or a payable is a record of
+    // something already settled: editing it would contradict the obligation.
+    if (await this.settlementOrigin.isFromSettlement(companyId, transactionId)) {
+      return {
+        statusCode: 400,
+        body: {
+          error:
+            "Transactions created by a charge receipt or a payable settlement cannot be edited",
+        },
+      };
+    }
+
     if (validation.data.categoryId) {
       const category = await this.categoryRepository.findById(
         companyId,
@@ -243,6 +309,15 @@ export class TransactionController {
       if (!category) {
         return { statusCode: 404, body: { error: "Category not found" } };
       }
+    }
+
+    const dimensions = await this.validateDimensions(
+      companyId,
+      validation.data.costCenterId ?? undefined,
+      undefined,
+    );
+    if (dimensions) {
+      return dimensions;
     }
 
     const result = transaction.edit(validation.data, {

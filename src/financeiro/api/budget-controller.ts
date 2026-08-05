@@ -3,6 +3,7 @@ import { DomainError } from "../../shared/domain/domain-error.js";
 import type { DomainEventBus } from "../../shared/domain/domain-event-bus.js";
 import { Budget } from "../domain/budget.js";
 import type { BudgetRepository } from "../infrastructure/budget-repository.js";
+import type { CostCenterRepository } from "../../cadastros/infrastructure/cost-center-repository.js";
 import type { CategoryRepository } from "../infrastructure/category-repository.js";
 import type { AccountRepository } from "../infrastructure/account-repository.js";
 import {
@@ -21,6 +22,7 @@ export class BudgetController {
     private readonly categoryRepository: CategoryRepository,
     private readonly accountRepository: AccountRepository,
     private readonly eventBus: DomainEventBus,
+    private readonly costCenterRepository?: CostCenterRepository,
   ) {}
 
   /**
@@ -34,19 +36,39 @@ export class BudgetController {
 
     const input = validation.data;
 
-    const category = await this.categoryRepository.findById(
-      companyId,
-      input.categoryId,
-    );
-    if (!category) {
-      return { statusCode: 404, body: { error: "Category not found" } };
+    // A budget carries a category, a cost center, or both.
+    let category;
+    if (input.categoryId) {
+      category = await this.categoryRepository.findById(
+        companyId,
+        input.categoryId,
+      );
+      if (!category) {
+        return { statusCode: 404, body: { error: "Category not found" } };
+      }
     }
 
-    // Two active budgets for the same category over the same window would make
-    // the progress ambiguous.
+    if (input.costCenterId && this.costCenterRepository) {
+      const costCenter = await this.costCenterRepository.findById(
+        companyId,
+        input.costCenterId,
+      );
+      if (!costCenter) {
+        return { statusCode: 404, body: { error: "Cost center not found" } };
+      }
+      if (!costCenter.isActive) {
+        return {
+          statusCode: 400,
+          body: { error: "Inactive cost centers cannot be budgeted" },
+        };
+      }
+    }
+
+    // Two active budgets measuring the same combination over the same window
+    // would make the progress ambiguous.
     const duplicated = await this.budgetRepository.existsOverlapping(
       companyId,
-      input.categoryId,
+      { categoryId: input.categoryId, costCenterId: input.costCenterId },
       { start: input.periodStart, end: input.periodEnd },
     );
     if (duplicated) {
@@ -54,7 +76,7 @@ export class BudgetController {
         statusCode: 409,
         body: {
           error:
-            "An active budget already exists for this category in an overlapping period",
+            "An active budget already exists for this combination in an overlapping period",
         },
       };
     }
@@ -65,6 +87,7 @@ export class BudgetController {
     const result = Budget.create({
       companyId,
       category,
+      costCenterId: input.costCenterId,
       periodStart: input.periodStart,
       periodEnd: input.periodEnd,
       plannedAmount: input.plannedAmount,

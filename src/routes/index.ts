@@ -22,16 +22,29 @@ import {
 } from "./finance-routes.js";
 import { createAuditRoutes } from "./audit-routes.js";
 import type { AuditController } from "../auditoria/api/audit-controller.js";
+import {
+  createCostCenterRoutes,
+  createCustomerRoutes,
+  createPeopleRoutes,
+  createSupplierRoutes,
+  type RegistrationRoutesDependencies,
+} from "./registration-routes.js";
+import {
+  createChargeRoutes,
+  createPayableRoutes,
+  createPixRoutes,
+  type PaymentRoutesDependencies,
+} from "./payment-routes.js";
 
 export const API_PREFIX = "/api/v1";
 
 /**
  * Everything the route tree needs, built by the composition root.
  */
-export interface RouteDependencies extends Omit<
-  FinanceRoutesDependencies,
-  "authenticate"
-> {
+export interface RouteDependencies
+  extends Omit<FinanceRoutesDependencies, "authenticate">,
+    Omit<RegistrationRoutesDependencies, "authenticate">,
+    Omit<PaymentRoutesDependencies, "authenticate"> {
   authController: AuthController;
   auditController: AuditController;
   requireAuditManage: preHandlerHookHandler;
@@ -93,6 +106,19 @@ export async function registerRoutes(
       await api.register(createGoalRoutes(deps), { prefix: "/goals" });
       await api.register(createDashboardRoutes(deps), { prefix: "/dashboard" });
       await api.register(createReportRoutes(deps), { prefix: "/reports" });
+
+      // cadastros
+      await api.register(createPeopleRoutes(deps), { prefix: "/people" });
+      await api.register(createCustomerRoutes(deps), { prefix: "/customers" });
+      await api.register(createSupplierRoutes(deps), { prefix: "/suppliers" });
+      await api.register(createCostCenterRoutes(deps), {
+        prefix: "/cost-centers",
+      });
+
+      // pagamentos
+      await api.register(createChargeRoutes(deps), { prefix: "/charges" });
+      await api.register(createPayableRoutes(deps), { prefix: "/payables" });
+      await api.register(createPixRoutes(deps), { prefix: "/pix" });
 
       // auditoria
       await api.register(

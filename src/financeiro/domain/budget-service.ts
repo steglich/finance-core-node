@@ -40,8 +40,12 @@ export class BudgetService {
       ...hierarchy.ancestorsOf(categoryId).map((category) => category.id),
     ]);
 
+    // A budget with no category dimension is not moved by a category alone.
     return budgets.filter(
-      (budget) => budget.isActive && scope.has(budget.categoryId),
+      (budget) =>
+        budget.isActive &&
+        budget.categoryId !== undefined &&
+        scope.has(budget.categoryId),
     );
   }
 

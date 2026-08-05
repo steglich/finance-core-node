@@ -1,7 +1,17 @@
 import type { Knex } from "knex";
 import { addMonths, toUtcDate } from "../domain/date-math.js";
+import { Percent } from "../domain/percent.js";
+import { Money } from "../domain/money.js";
+import {
+  amountsDueFor,
+  daysLate,
+} from "../../pagamentos/domain/charge-math.js";
 import type {
   BudgetSummary,
+  CostCenterReportRow,
+  PayablesSummary,
+  ReceivableReportRow,
+  ReceivablesSummary,
   CardSummaryRow,
   CashFlowRow,
   CategoryBreakdownRow,
@@ -25,6 +35,10 @@ const CONFIRMED = "CONFIRMED";
 function num(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function round2(value: number): number {
+  return Number(value.toFixed(2));
 }
 
 function percentOf(amount: number, total: number): number {
@@ -66,7 +80,42 @@ export class KnexReportingRepository implements ReportingRepository {
       query.whereIn("transactions.account_id", [...scope.accountIds]);
     }
 
+    // The filter descends the tree: asking for "Marketing" includes everything
+    // charged to its children.
+    if (scope.costCenterIds && scope.costCenterIds.length > 0) {
+      query.whereIn(
+        "transactions.cost_center_id",
+        this.costCenterScope(scope.companyId, scope.costCenterIds),
+      );
+    }
+
     return query;
+  }
+
+  /**
+   * Subquery listing the given cost centers and every descendant of theirs.
+   */
+  private costCenterScope(
+    companyId: string,
+    costCenterIds: readonly string[],
+  ): Knex.QueryBuilder {
+    return this.knex
+      .withRecursive("scope", (builder) => {
+        builder
+          .select("id")
+          .from("cost_centers")
+          .whereIn("id", [...costCenterIds])
+          .andWhere("company_id", companyId)
+          .unionAll((union) =>
+            union
+              .select("cc.id")
+              .from("cost_centers as cc")
+              .join("scope as s", "cc.parent_id", "s.id")
+              .where("cc.company_id", companyId),
+          );
+      })
+      .select("id")
+      .from("scope");
   }
 
   private async currencyOf(companyId: string): Promise<string> {
@@ -518,6 +567,316 @@ export class KnexReportingRepository implements ReportingRepository {
       column: "transactions.account_id",
       label: "accounts.name",
     });
+  }
+
+  /**
+   * Confirmed expenses by cost center, with each subtree rolled up into its
+   * root: a child's spending shows under the parent, which is what makes the
+   * report add up to the period total.
+   *
+   * Transactions with no cost center are kept as their own group rather than
+   * dropped — leaving them out would make the report disagree with the period
+   * indicators.
+   */
+  async spendingByCostCenter(
+    scope: ReportingScope,
+  ): Promise<CostCenterReportRow[]> {
+    const rows = (await this.scoped(scope)
+      .andWhere("transactions.type", "EXPENSE")
+      .leftJoin(
+        "cost_centers",
+        "cost_centers.id",
+        "transactions.cost_center_id",
+      )
+      .select(
+        "transactions.cost_center_id as cost_center_id",
+        "cost_centers.name as cost_center_name",
+        "cost_centers.parent_id as parent_id",
+        this.knex.raw("COALESCE(SUM(transactions.net_amount), 0) AS amount"),
+      )
+      .groupBy(
+        "transactions.cost_center_id",
+        "cost_centers.name",
+        "cost_centers.parent_id",
+      )) as {
+      cost_center_id: string | null;
+      cost_center_name: string | null;
+      parent_id: string | null;
+      amount: string;
+    }[];
+
+    // The whole tree is needed to roll a grandchild all the way up, even when
+    // the intermediate node had no spending of its own.
+    const tree = (await this.knex("cost_centers")
+      .where("company_id", scope.companyId)
+      .select("id", "name", "parent_id")) as {
+      id: string;
+      name: string;
+      parent_id: string | null;
+    }[];
+
+    const parentOf = new Map<string, string | null>();
+    const nameOf = new Map<string, string>();
+    for (const node of tree) {
+      parentOf.set(node.id, node.parent_id);
+      nameOf.set(node.id, node.name);
+    }
+
+    const own = new Map<string | null, number>();
+    for (const row of rows) {
+      own.set(row.cost_center_id, num(row.amount));
+    }
+
+    const totals = new Map<string | null, number>();
+    for (const [id, amount] of own) {
+      totals.set(id, (totals.get(id) ?? 0) + amount);
+
+      // Walk up, guarding against a cycle in stored data.
+      const seen = new Set<string>(id === null ? [] : [id]);
+      let parent = id === null ? null : (parentOf.get(id) ?? null);
+      while (parent !== null && !seen.has(parent)) {
+        seen.add(parent);
+        totals.set(parent, (totals.get(parent) ?? 0) + amount);
+        parent = parentOf.get(parent) ?? null;
+      }
+    }
+
+    const grandTotal = [...own.values()].reduce((sum, value) => sum + value, 0);
+
+    const result: CostCenterReportRow[] = [...totals.entries()].map(
+      ([id, total]) => ({
+        costCenterId: id,
+        costCenterName:
+          id === null ? "Sem classificação" : (nameOf.get(id) ?? "—"),
+        ownAmount: own.get(id) ?? 0,
+        totalAmount: total,
+        percent: percentOf(total, grandTotal),
+      }),
+    );
+
+    return result.sort((a, b) => b.totalAmount - a.totalAmount);
+  }
+
+  async receivablesSummary(
+    scope: ReportingScope,
+  ): Promise<ReceivablesSummary> {
+    const open = (await this.knex("charges")
+      .where("company_id", scope.companyId)
+      .whereIn("status", ["ISSUED", "OVERDUE"])
+      .andWhere("due_date", ">=", scope.start)
+      .andWhere("due_date", "<=", scope.end)
+      .select(
+        "id",
+        "status",
+        "due_date",
+        "amount",
+        "currency",
+        "penalty_percent",
+        "monthly_interest_percent",
+      )) as Record<string, unknown>[];
+
+    const received = (await this.knex("charge_receipts as r")
+      .join("charges as c", "c.id", "r.charge_id")
+      .where("c.company_id", scope.companyId)
+      .andWhere("r.received_at", ">=", scope.start)
+      .andWhere("r.received_at", "<=", scope.end)
+      .sum<{ total: string }[]>("r.amount as total")) as { total: string }[];
+
+    const currency =
+      (open[0]?.currency as string) ?? (await this.currencyOf(scope.companyId));
+
+    let openTotal = 0;
+    let overdueTotal = 0;
+    let overdueCount = 0;
+    const reference = new Date();
+
+    for (const row of open) {
+      const due = this.chargeAmountsDue(row, reference);
+      openTotal += due.totalDue.amount;
+
+      if (daysLate(new Date(row.due_date as string), reference) > 0) {
+        overdueCount += 1;
+        overdueTotal += due.totalDue.amount;
+      }
+    }
+
+    return {
+      openCount: open.length,
+      openTotal: round2(openTotal),
+      overdueCount,
+      overdueTotal: round2(overdueTotal),
+      receivedTotal: num(received[0]?.total),
+      currency,
+    };
+  }
+
+  async payablesSummary(scope: ReportingScope): Promise<PayablesSummary> {
+    const rows = (await this.knex("payables")
+      .where("company_id", scope.companyId)
+      .whereIn("status", ["PENDING", "OVERDUE"])
+      .andWhere("due_date", ">=", scope.start)
+      .andWhere("due_date", "<=", scope.end)
+      .select("status", "due_date", "amount", "currency")) as Record<
+      string,
+      unknown
+    >[];
+
+    const paid = (await this.knex("payable_payments as p")
+      .join("payables as pa", "pa.id", "p.payable_id")
+      .where("pa.company_id", scope.companyId)
+      .andWhere("p.paid_at", ">=", scope.start)
+      .andWhere("p.paid_at", "<=", scope.end)
+      .sum<{ total: string }[]>("p.amount as total")) as { total: string }[];
+
+    const reference = new Date();
+    let openTotal = 0;
+    let overdueTotal = 0;
+    let overdueCount = 0;
+
+    for (const row of rows) {
+      const amount = num(row.amount);
+      openTotal += amount;
+
+      if (daysLate(new Date(row.due_date as string), reference) > 0) {
+        overdueCount += 1;
+        overdueTotal += amount;
+      }
+    }
+
+    return {
+      openCount: rows.length,
+      openTotal: round2(openTotal),
+      overdueCount,
+      overdueTotal: round2(overdueTotal),
+      paidTotal: num(paid[0]?.total),
+      currency:
+        (rows[0]?.currency as string) ??
+        (await this.currencyOf(scope.companyId)),
+    };
+  }
+
+  async receivables(
+    scope: ReportingScope,
+    referenceDate: Date,
+  ): Promise<ReceivableReportRow[]> {
+    const query = this.knex("charges as c")
+      .join("people as p", "p.id", "c.person_id")
+      .leftJoin("charge_receipts as r", "r.charge_id", "c.id")
+      .where("c.company_id", scope.companyId)
+      .andWhere("c.due_date", ">=", scope.start)
+      .andWhere("c.due_date", "<=", scope.end);
+
+    if (scope.personId) query.andWhere("c.person_id", scope.personId);
+    if (scope.status) query.andWhere("c.status", scope.status);
+
+    const rows = (await query
+      .groupBy("c.id", "p.name")
+      .orderBy("c.due_date", "asc")
+      .select(
+        "c.id",
+        "c.person_id",
+        "p.name as person_name",
+        "c.description",
+        "c.status",
+        "c.due_date",
+        "c.amount",
+        "c.currency",
+        "c.penalty_percent",
+        "c.monthly_interest_percent",
+      )
+      .sum({ settled: "r.amount" })) as Record<string, unknown>[];
+
+    return rows.map((row) => {
+      const due = this.chargeAmountsDue(row, referenceDate);
+
+      return {
+        id: row.id as string,
+        personId: row.person_id as string,
+        personName: row.person_name as string,
+        description: (row.description as string | null) ?? undefined,
+        status: row.status as string,
+        dueDate: new Date(row.due_date as string),
+        amount: due.original.amount,
+        charges: due.penalty.add(due.interest).amount,
+        totalDue: due.totalDue.amount,
+        settledAmount: num(row.settled),
+      };
+    });
+  }
+
+  async payables(scope: ReportingScope): Promise<ReceivableReportRow[]> {
+    const query = this.knex("payables as pa")
+      .join("people as p", "p.id", "pa.person_id")
+      .where("pa.company_id", scope.companyId)
+      .andWhere("pa.due_date", ">=", scope.start)
+      .andWhere("pa.due_date", "<=", scope.end)
+      .orderBy("pa.due_date", "asc");
+
+    if (scope.costCenterIds && scope.costCenterIds.length > 0) {
+      query.whereIn(
+        "pa.cost_center_id",
+        this.costCenterScope(scope.companyId, scope.costCenterIds),
+      );
+    }
+
+    if (scope.personId) query.andWhere("pa.person_id", scope.personId);
+    if (scope.categoryId) query.andWhere("pa.category_id", scope.categoryId);
+    if (scope.status) query.andWhere("pa.status", scope.status);
+
+    const rows = (await query
+      .leftJoin("payable_payments as pay", "pay.payable_id", "pa.id")
+      .groupBy("pa.id", "p.name")
+      .select(
+        "pa.id",
+        "pa.person_id",
+        "p.name as person_name",
+        "pa.description",
+        "pa.status",
+        "pa.due_date",
+        "pa.amount",
+        "pa.category_id",
+        "pa.cost_center_id",
+      )
+      .sum({ settled: "pay.amount" })) as Record<string, unknown>[];
+
+    // A payable owes exactly its amount however late it is: what a supplier
+    // charges for lateness arrives on their own document.
+    return rows.map((row) => ({
+      id: row.id as string,
+      personId: row.person_id as string,
+      personName: row.person_name as string,
+      description: (row.description as string | null) ?? undefined,
+      status: row.status as string,
+      dueDate: new Date(row.due_date as string),
+      amount: num(row.amount),
+      charges: 0,
+      totalDue: num(row.amount),
+      categoryId: (row.category_id as string | null) ?? undefined,
+      costCenterId: (row.cost_center_id as string | null) ?? undefined,
+      settledAmount: num(row.settled),
+    }));
+  }
+
+  /**
+   * Penalty and interest through the very functions the domain uses, so the
+   * reports cannot drift from what the charge itself would say.
+   */
+  private chargeAmountsDue(
+    row: Record<string, unknown>,
+    referenceDate: Date,
+  ): ReturnType<typeof amountsDueFor> {
+    const currency = (row.currency as string) ?? DEFAULT_CURRENCY;
+    const open = ["ISSUED", "OVERDUE"].includes(row.status as string);
+    const days = open
+      ? daysLate(new Date(row.due_date as string), referenceDate)
+      : 0;
+
+    return amountsDueFor(
+      Money.fromDecimalString(String(row.amount), currency),
+      Percent.create(num(row.penalty_percent)),
+      Percent.create(num(row.monthly_interest_percent)),
+      days,
+    );
   }
 
   /**

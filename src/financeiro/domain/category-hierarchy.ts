@@ -1,5 +1,6 @@
 import { DomainError } from "../../shared/domain/domain-error.js";
 import { Result } from "../../shared/domain/result.js";
+import { TreeHierarchy } from "../../shared/domain/tree-hierarchy.js";
 import type { Category } from "./category.js";
 
 /**
@@ -12,117 +13,19 @@ export interface CategoryNode {
 
 /**
  * Domain service over a flat set of categories of a single company.
- * Provides the hierarchy queries the entity cannot answer on its own
- * (ancestors, descendants, tree) and guards non-circularity on moves.
+ * Inherits the generic traversal (ancestors, descendants, tree, cycle guard)
+ * from `TreeHierarchy` and adds the category-specific rules.
  */
-export class CategoryHierarchy {
-  private readonly byId: Map<string, Category>;
-  private readonly childrenByParentId: Map<string | undefined, Category[]>;
-
+export class CategoryHierarchy extends TreeHierarchy<Category, CategoryNode> {
   constructor(categories: readonly Category[]) {
-    this.byId = new Map();
-    this.childrenByParentId = new Map();
-
-    for (const category of categories) {
-      this.byId.set(category.id, category);
-      const siblings = this.childrenByParentId.get(category.parentId);
-      if (siblings) {
-        siblings.push(category);
-      } else {
-        this.childrenByParentId.set(category.parentId, [category]);
-      }
-    }
+    super(categories);
   }
 
-  get size(): number {
-    return this.byId.size;
-  }
-
-  find(categoryId: string): Category | undefined {
-    return this.byId.get(categoryId);
-  }
-
-  /**
-   * Root categories, in insertion order.
-   */
-  roots(): Category[] {
-    return [...(this.childrenByParentId.get(undefined) ?? [])];
-  }
-
-  childrenOf(categoryId: string): Category[] {
-    return [...(this.childrenByParentId.get(categoryId) ?? [])];
-  }
-
-  /**
-   * Ancestors from the nearest parent up to the root.
-   * Stops safely if the stored data contains a cycle.
-   */
-  ancestorsOf(categoryId: string): Category[] {
-    const ancestors: Category[] = [];
-    const visited = new Set<string>([categoryId]);
-
-    let current = this.byId.get(categoryId)?.parentId;
-    while (current !== undefined && !visited.has(current)) {
-      const parent = this.byId.get(current);
-      if (!parent) {
-        break;
-      }
-      ancestors.push(parent);
-      visited.add(parent.id);
-      current = parent.parentId;
-    }
-
-    return ancestors;
-  }
-
-  /**
-   * All descendants, in breadth-first order.
-   */
-  descendantsOf(categoryId: string): Category[] {
-    const descendants: Category[] = [];
-    const queue = this.childrenOf(categoryId);
-    const visited = new Set<string>([categoryId]);
-
-    while (queue.length > 0) {
-      const category = queue.shift();
-      if (!category || visited.has(category.id)) {
-        continue;
-      }
-      visited.add(category.id);
-      descendants.push(category);
-      queue.push(...this.childrenOf(category.id));
-    }
-
-    return descendants;
-  }
-
-  /**
-   * Depth of a category in the tree (0 for root categories).
-   */
-  depthOf(categoryId: string): number {
-    return this.ancestorsOf(categoryId).length;
-  }
-
-  /**
-   * Whether `candidateId` is a descendant of `categoryId`.
-   */
-  isDescendantOf(candidateId: string, categoryId: string): boolean {
-    return this.ancestorsOf(candidateId).some(
-      (ancestor) => ancestor.id === categoryId,
-    );
-  }
-
-  /**
-   * Builds the nested category tree.
-   */
-  tree(): CategoryNode[] {
-    const buildNodes = (categories: readonly Category[]): CategoryNode[] =>
-      categories.map((category) => ({
-        category,
-        children: buildNodes(this.childrenOf(category.id)),
-      }));
-
-    return buildNodes(this.roots());
+  protected override wrapNode(
+    category: Category,
+    children: CategoryNode[],
+  ): CategoryNode {
+    return { category, children };
   }
 
   /**

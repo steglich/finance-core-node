@@ -11,7 +11,8 @@ function toBudget(row: Record<string, unknown>): Budget {
   return new Budget({
     id: row.id as string,
     companyId: row.company_id as string,
-    categoryId: row.category_id as string,
+    categoryId: (row.category_id as string | null) ?? undefined,
+    costCenterId: (row.cost_center_id as string | null) ?? undefined,
     period: Period.create(
       new Date(row.period_start as string),
       new Date(row.period_end as string),
@@ -48,7 +49,8 @@ export class KnexBudgetRepository implements BudgetRepository {
   private toRow(budget: Budget): Record<string, unknown> {
     return {
       company_id: budget.companyId,
-      category_id: budget.categoryId,
+      category_id: budget.categoryId ?? null,
+      cost_center_id: budget.costCenterId ?? null,
       period_start: budget.period.startDate,
       period_end: budget.period.endDate,
       planned_amount: budget.plannedAmount.toDecimalString(),
@@ -127,18 +129,31 @@ export class KnexBudgetRepository implements BudgetRepository {
 
   async existsOverlapping(
     companyId: string,
-    categoryId: string,
+    dimensions: {
+      categoryId?: string | undefined;
+      costCenterId?: string | undefined;
+    },
     period: { start: Date; end: Date },
     excludeBudgetId?: string,
   ): Promise<boolean> {
     const query = this.knex("budgets")
-      .where({
-        company_id: companyId,
-        category_id: categoryId,
-        status: "ACTIVE",
-      })
+      .where({ company_id: companyId, status: "ACTIVE" })
       .andWhere("period_start", "<=", period.end)
       .andWhere("period_end", ">=", period.start);
+
+    // Each dimension must match exactly, absence included — otherwise a budget
+    // on "Marketing, no category" would block one on "Marketing, Serviços".
+    if (dimensions.categoryId) {
+      query.andWhere("category_id", dimensions.categoryId);
+    } else {
+      query.whereNull("category_id");
+    }
+
+    if (dimensions.costCenterId) {
+      query.andWhere("cost_center_id", dimensions.costCenterId);
+    } else {
+      query.whereNull("cost_center_id");
+    }
 
     if (excludeBudgetId) {
       query.andWhereNot("id", excludeBudgetId);
@@ -157,22 +172,60 @@ export class KnexBudgetRepository implements BudgetRepository {
   }
 
   /**
-   * Sums the confirmed expenses of the budget's category and every descendant
-   * inside the period. Cancelled and refunded transactions are excluded by the
-   * status filter.
+   * Sums the confirmed expenses inside the period along whichever dimensions
+   * the budget carries. Each dimension descends its own tree — spending on a
+   * subcategory or a child cost center rolls up into the budget above it — and
+   * when both are present a transaction must match both to count.
+   *
+   * Cancelled and refunded transactions are excluded by the status filter.
    */
   async actualAmount(budget: Budget): Promise<Money> {
+    const conditions: string[] = [];
+    const bindings: (string | Date)[] = [];
+    const ctes: string[] = [];
+
+    if (budget.categoryId) {
+      ctes.push(
+        `category_scope AS (
+           SELECT id
+             FROM categories
+            WHERE id = ? AND company_id = ?
+           UNION ALL
+           SELECT c.id
+             FROM categories c
+             JOIN category_scope s ON c.parent_id = s.id
+            WHERE c.company_id = ?
+         )`,
+      );
+      bindings.push(budget.categoryId, budget.companyId, budget.companyId);
+      conditions.push("t.category_id IN (SELECT id FROM category_scope)");
+    }
+
+    if (budget.costCenterId) {
+      ctes.push(
+        `cost_center_scope AS (
+           SELECT id
+             FROM cost_centers
+            WHERE id = ? AND company_id = ?
+           UNION ALL
+           SELECT cc.id
+             FROM cost_centers cc
+             JOIN cost_center_scope s ON cc.parent_id = s.id
+            WHERE cc.company_id = ?
+         )`,
+      );
+      bindings.push(budget.costCenterId, budget.companyId, budget.companyId);
+      conditions.push("t.cost_center_id IN (SELECT id FROM cost_center_scope)");
+    }
+
+    // The aggregate refuses to exist without a dimension, so this is a guard
+    // against a row written before that invariant, not an expected path.
+    if (conditions.length === 0) {
+      return Money.zero(budget.currency);
+    }
+
     const result = await this.knex.raw(
-      `WITH RECURSIVE scope AS (
-         SELECT id
-           FROM categories
-          WHERE id = ? AND company_id = ?
-         UNION ALL
-         SELECT c.id
-           FROM categories c
-           JOIN scope s ON c.parent_id = s.id
-          WHERE c.company_id = ?
-       )
+      `WITH RECURSIVE ${ctes.join(",\n       ")}
        SELECT COALESCE(SUM(t.net_amount), 0) AS total
          FROM transactions t
         WHERE t.company_id = ?
@@ -180,11 +233,9 @@ export class KnexBudgetRepository implements BudgetRepository {
           AND t.status = 'CONFIRMED'
           AND t.date >= ?
           AND t.date <= ?
-          AND t.category_id IN (SELECT id FROM scope)`,
+          AND ${conditions.join("\n          AND ")}`,
       [
-        budget.categoryId,
-        budget.companyId,
-        budget.companyId,
+        ...bindings,
         budget.companyId,
         budget.period.startDate,
         budget.period.endDate,

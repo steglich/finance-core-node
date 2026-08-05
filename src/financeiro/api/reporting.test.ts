@@ -6,6 +6,10 @@ import { escapeCsvField, toCsv } from "./csv.js";
 import { validateDashboardQuery, validateReportQuery } from "./dtos.js";
 import type {
   BudgetSummary,
+  CostCenterReportRow,
+  PayablesSummary,
+  ReceivableReportRow,
+  ReceivablesSummary,
   CardSummaryRow,
   CashFlowRow,
   CategoryBreakdownRow,
@@ -39,6 +43,11 @@ class FakeReportingRepository implements ReportingRepository {
       incomeStatement?: IncomeStatementRow[];
       byCard?: SpendingRow[];
       byAccount?: SpendingRow[];
+      byCostCenter?: CostCenterReportRow[];
+      receivablesSummary?: ReceivablesSummary;
+      payablesSummary?: PayablesSummary;
+      receivables?: ReceivableReportRow[];
+      payables?: ReceivableReportRow[];
     } = {},
   ) {}
 
@@ -91,6 +100,53 @@ class FakeReportingRepository implements ReportingRepository {
 
   async cardSummary(): Promise<CardSummaryRow[]> {
     return this.data.cards ?? [];
+  }
+
+  async spendingByCostCenter(
+    scope: ReportingScope,
+  ): Promise<CostCenterReportRow[]> {
+    this.record(scope);
+    return this.data.byCostCenter ?? [];
+  }
+
+  async receivablesSummary(
+    scope: ReportingScope,
+  ): Promise<ReceivablesSummary> {
+    this.record(scope);
+    return (
+      this.data.receivablesSummary ?? {
+        openCount: 0,
+        openTotal: 0,
+        overdueCount: 0,
+        overdueTotal: 0,
+        receivedTotal: 0,
+        currency: "BRL",
+      }
+    );
+  }
+
+  async payablesSummary(scope: ReportingScope): Promise<PayablesSummary> {
+    this.record(scope);
+    return (
+      this.data.payablesSummary ?? {
+        openCount: 0,
+        openTotal: 0,
+        overdueCount: 0,
+        overdueTotal: 0,
+        paidTotal: 0,
+        currency: "BRL",
+      }
+    );
+  }
+
+  async receivables(scope: ReportingScope): Promise<ReceivableReportRow[]> {
+    this.record(scope);
+    return this.data.receivables ?? [];
+  }
+
+  async payables(scope: ReportingScope): Promise<ReceivableReportRow[]> {
+    this.record(scope);
+    return this.data.payables ?? [];
   }
 
   async cashFlow(scope: ReportingScope): Promise<CashFlowRow[]> {
@@ -402,5 +458,329 @@ describe("CSV serialization", () => {
     });
 
     assert.equal(csv, "A,B\r\n1,2\r\n3,4");
+  });
+});
+
+describe("Phase 3 dashboard and reports", () => {
+  it("accepts cost centers as a list or as a comma-separated value", () => {
+    const list = validateDashboardQuery({
+      ...PERIOD,
+      costCenterIds: ["cc-1", "cc-2"],
+    });
+    assert.ok(list.success);
+    assert.deepEqual(list.data.costCenterIds, ["cc-1", "cc-2"]);
+
+    const csv = validateDashboardQuery({
+      ...PERIOD,
+      costCenterIds: "cc-1,cc-2",
+    });
+    assert.ok(csv.success);
+    assert.deepEqual(csv.data.costCenterIds, ["cc-1", "cc-2"]);
+  });
+
+  it("carries the cost center filter into every period-derived read", async () => {
+    const reporting = new FakeReportingRepository();
+
+    await new DashboardController(reporting).overview(COMPANY_ID, {
+      ...PERIOD,
+      costCenterIds: ["cc-marketing"],
+    });
+
+    assert.ok(reporting.scopes.length > 0);
+    for (const scope of reporting.scopes) {
+      assert.deepEqual(scope.costCenterIds, ["cc-marketing"]);
+      assert.equal(scope.companyId, COMPANY_ID);
+    }
+  });
+
+  it("returns the receivables and payables summaries", async () => {
+    const reporting = new FakeReportingRepository({
+      receivablesSummary: {
+        openCount: 3,
+        openTotal: 4532.5,
+        overdueCount: 1,
+        overdueTotal: 1532.5,
+        receivedTotal: 0,
+        currency: "BRL",
+      },
+      payablesSummary: {
+        openCount: 2,
+        openTotal: 1300,
+        overdueCount: 1,
+        overdueTotal: 300,
+        paidTotal: 0,
+        currency: "BRL",
+      },
+    });
+
+    const result = await new DashboardController(reporting).overview(
+      COMPANY_ID,
+      PERIOD,
+    );
+
+    const summaries = (result.body as Record<string, unknown>)
+      .summaries as Record<string, unknown>;
+
+    assert.deepEqual(summaries.receivables, {
+      openCount: 3,
+      openTotal: 4532.5,
+      overdueCount: 1,
+      overdueTotal: 1532.5,
+      receivedTotal: 0,
+      currency: "BRL",
+    });
+    assert.deepEqual(summaries.payables, {
+      openCount: 2,
+      openTotal: 1300,
+      overdueCount: 1,
+      overdueTotal: 300,
+      paidTotal: 0,
+      currency: "BRL",
+    });
+  });
+
+  it("zeroes both summaries when there is nothing open", async () => {
+    const result = await new DashboardController(
+      new FakeReportingRepository(),
+    ).overview(COMPANY_ID, PERIOD);
+
+    const summaries = (result.body as Record<string, unknown>)
+      .summaries as {
+      receivables: { openTotal: number; openCount: number };
+      payables: { openTotal: number; openCount: number };
+    };
+
+    assert.equal(summaries.receivables.openTotal, 0);
+    assert.equal(summaries.receivables.openCount, 0);
+    assert.equal(summaries.payables.openTotal, 0);
+    assert.equal(summaries.payables.openCount, 0);
+  });
+
+  it("accepts the three new report types", () => {
+    for (const type of ["by-cost-center", "receivables", "payables"]) {
+      const result = validateReportQuery(type, PERIOD);
+      assert.ok(result.success, `${type} should be a valid report type`);
+    }
+  });
+
+  it("renders by-cost-center with the rollup and the unclassified group", async () => {
+    const reporting = new FakeReportingRepository({
+      byCostCenter: [
+        {
+          costCenterId: "cc-marketing",
+          costCenterName: "Marketing",
+          ownAmount: 200,
+          totalAmount: 500,
+          percent: 62.5,
+        },
+        {
+          costCenterId: "cc-midia",
+          costCenterName: "Mídia Paga",
+          ownAmount: 300,
+          totalAmount: 300,
+          percent: 37.5,
+        },
+        {
+          costCenterId: null,
+          costCenterName: "Sem classificação",
+          ownAmount: 300,
+          totalAmount: 300,
+          percent: 37.5,
+        },
+      ],
+    });
+
+    const result = await new ReportController(reporting).generate(
+      COMPANY_ID,
+      "by-cost-center",
+      PERIOD,
+    );
+
+    const body = result.body as { columns: string[]; rows: unknown[][] };
+    assert.deepEqual(body.columns, [
+      "Centro de custo",
+      "Valor próprio",
+      "Valor com filhos",
+      "% do total",
+    ]);
+    // The parent shows its own 200 plus the child's 300.
+    assert.deepEqual(body.rows[0], ["Marketing", 200, 500, 62.5]);
+    assert.deepEqual(body.rows[2], ["Sem classificação", 300, 300, 37.5]);
+  });
+
+  it("renders receivables with the accrued charges and a total line", async () => {
+    const reporting = new FakeReportingRepository({
+      receivables: [
+        {
+          id: "charge-1",
+          personId: "person-1",
+          personName: "João Silva",
+          status: "OVERDUE",
+          dueDate: new Date("2026-08-15T00:00:00Z"),
+          amount: 1500,
+          charges: 32.5,
+          totalDue: 1532.5,
+          settledAmount: 0,
+        },
+      ],
+    });
+
+    const result = await new ReportController(reporting).generate(
+      COMPANY_ID,
+      "receivables",
+      PERIOD,
+    );
+
+    const body = result.body as { columns: string[]; rows: unknown[][] };
+    assert.deepEqual(body.rows[0], [
+      "João Silva",
+      "",
+      "OVERDUE",
+      "2026-08-15",
+      1500,
+      32.5,
+      1532.5,
+    ]);
+    // Closing lines: issued, overdue and received totals.
+    assert.deepEqual(body.rows.at(-3), [
+      "Total emitido",
+      "",
+      "",
+      "",
+      "",
+      "",
+      0,
+    ]);
+    assert.deepEqual(body.rows.at(-2), [
+      "Total vencido",
+      "",
+      "",
+      "",
+      "",
+      "",
+      1532.5,
+    ]);
+    assert.deepEqual(body.rows.at(-1), [
+      "Total recebido",
+      "",
+      "",
+      "",
+      "",
+      "",
+      0,
+    ]);
+  });
+
+  it("renders payables without accruing anything for lateness", async () => {
+    const reporting = new FakeReportingRepository({
+      payables: [
+        {
+          id: "payable-1",
+          personId: "person-2",
+          personName: "Fornecedor XYZ",
+          status: "OVERDUE",
+          dueDate: new Date("2026-08-10T00:00:00Z"),
+          amount: 300,
+          charges: 0,
+          totalDue: 300,
+          settledAmount: 0,
+        },
+      ],
+    });
+
+    const result = await new ReportController(reporting).generate(
+      COMPANY_ID,
+      "payables",
+      PERIOD,
+    );
+
+    const body = result.body as { rows: unknown[][] };
+    assert.deepEqual(body.rows[0], [
+      "Fornecedor XYZ",
+      "",
+      "OVERDUE",
+      "2026-08-10",
+      "",
+      "",
+      300,
+    ]);
+    assert.deepEqual(body.rows.at(-2), [
+      "Total vencido",
+      "",
+      "",
+      "",
+      "",
+      "",
+      300,
+    ]);
+  });
+
+  it("exports the three new reports as CSV from the same table", async () => {
+    const reporting = new FakeReportingRepository({
+      byCostCenter: [
+        {
+          costCenterId: "cc-marketing",
+          costCenterName: "Marketing",
+          ownAmount: 200,
+          totalAmount: 500,
+          percent: 100,
+        },
+      ],
+      receivables: [
+        {
+          id: "charge-1",
+          personId: "person-1",
+          personName: "João Silva",
+          status: "ISSUED",
+          dueDate: new Date("2026-08-15T00:00:00Z"),
+          amount: 1500,
+          charges: 0,
+          totalDue: 1500,
+          settledAmount: 0,
+        },
+      ],
+      payables: [
+        {
+          id: "payable-1",
+          personId: "person-2",
+          personName: "Fornecedor XYZ",
+          status: "PENDING",
+          dueDate: new Date("2026-08-20T00:00:00Z"),
+          amount: 300,
+          charges: 0,
+          totalDue: 300,
+          settledAmount: 0,
+        },
+      ],
+    });
+
+    const controller = new ReportController(reporting);
+
+    for (const type of ["by-cost-center", "receivables", "payables"] as const) {
+      const exported = await controller.export(COMPANY_ID, type, PERIOD);
+
+      assert.equal(exported.statusCode, 200);
+      assert.equal(
+        exported.headers?.["Content-Type"],
+        "text/csv; charset=utf-8",
+      );
+      assert.match(
+        String(exported.headers?.["Content-Disposition"] ?? ""),
+        new RegExp(type),
+      );
+      assert.equal(typeof exported.body, "string");
+      assert.ok(String(exported.body).length > 0);
+    }
+  });
+
+  it("carries the cost center filter into the report scope", async () => {
+    const reporting = new FakeReportingRepository();
+
+    await new ReportController(reporting).generate(COMPANY_ID, "payables", {
+      ...PERIOD,
+      costCenterIds: ["cc-marketing"],
+    });
+
+    assert.deepEqual(reporting.scopes[0]?.costCenterIds, ["cc-marketing"]);
   });
 });

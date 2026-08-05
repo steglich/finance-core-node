@@ -1,10 +1,10 @@
 // Value Objects
-export { Email } from "./email.js";
+export { Email } from "../../shared/domain/email.js";
 // Note: CompanyTypeValue is exported from company.ts (for Company entity) and BrazilianCompanyType from company-type.ts
 export type { CompanyTypeValue as BrazilianCompanyType } from "./company-type.js";
 export { CompanyType } from "./company-type.js";
-export { CPF } from "./cpf.js";
-export { CNPJ } from "./cnpj.js";
+export { CPF } from "../../shared/domain/cpf.js";
+export { CNPJ } from "../../shared/domain/cnpj.js";
 export { Password } from "./password.js";
 
 // Entities - Note: CompanyTypeValue is defined in company.ts for use with the Company entity

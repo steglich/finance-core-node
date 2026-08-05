@@ -274,3 +274,130 @@ describe("BudgetService rollup", () => {
     assert.equal(affected.length, 0);
   });
 });
+
+describe("Budget dimensions", () => {
+  const period = {
+    periodStart: new Date("2026-08-01T00:00:00Z"),
+    periodEnd: new Date("2026-08-31T00:00:00Z"),
+    plannedAmount: 800,
+    currency: "BRL",
+  };
+
+  it("accepts a budget on a category alone", () => {
+    const result = Budget.create({
+      companyId: "company-1",
+      category: expenseCategory,
+      ...period,
+    });
+
+    assert.equal(result.isSuccess, true);
+    assert.equal(result.value?.categoryId, "category-food");
+    assert.equal(result.value?.costCenterId, undefined);
+  });
+
+  it("accepts a budget on a cost center alone", () => {
+    const result = Budget.create({
+      companyId: "company-1",
+      costCenterId: "cc-marketing",
+      ...period,
+    });
+
+    assert.equal(result.isSuccess, true, result.error?.message ?? "");
+    assert.equal(result.value?.categoryId, undefined);
+    assert.equal(result.value?.costCenterId, "cc-marketing");
+  });
+
+  it("accepts a budget carrying both dimensions", () => {
+    const result = Budget.create({
+      companyId: "company-1",
+      category: expenseCategory,
+      costCenterId: "cc-marketing",
+      ...period,
+    });
+
+    assert.equal(result.isSuccess, true);
+    assert.equal(result.value?.categoryId, "category-food");
+    assert.equal(result.value?.costCenterId, "cc-marketing");
+  });
+
+  it("rejects a budget with no dimension at all", () => {
+    const result = Budget.create({ companyId: "company-1", ...period });
+
+    assert.equal(result.error?.code, "VALIDATION_ERROR");
+  });
+
+  it("still rejects an income category and a category of another company", () => {
+    assert.equal(
+      Budget.create({
+        companyId: "company-1",
+        category: { ...expenseCategory, type: "INCOME" },
+        ...period,
+      }).error?.code,
+      "VALIDATION_ERROR",
+    );
+
+    assert.equal(
+      Budget.create({
+        companyId: "company-1",
+        category: { ...expenseCategory, companyId: "company-2" },
+        ...period,
+      }).error?.code,
+      "UNAUTHORIZED_ACCESS",
+    );
+  });
+
+  it("carries both dimensions on BudgetCreated", () => {
+    const budget = Budget.create({
+      companyId: "company-1",
+      category: expenseCategory,
+      costCenterId: "cc-marketing",
+      ...period,
+    }).value!;
+
+    const event = budget.events.find(
+      (raised) => raised.getEventType() === "BudgetCreated",
+    ) as unknown as { categoryId?: string; costCenterId?: string };
+
+    assert.equal(event.categoryId, "category-food");
+    assert.equal(event.costCenterId, "cc-marketing");
+  });
+
+  it("exposes both dimensions on toJSON", () => {
+    const budget = Budget.create({
+      companyId: "company-1",
+      costCenterId: "cc-marketing",
+      ...period,
+    }).value!;
+
+    const json = budget.toJSON() as Record<string, unknown>;
+    assert.equal(json.categoryId, undefined);
+    assert.equal(json.costCenterId, "cc-marketing");
+  });
+
+  it("does not let a category-only transaction move a cost-center-only budget", () => {
+    const service = new BudgetService();
+    const hierarchy = new CategoryHierarchy([category("category-food")]);
+
+    const costCenterBudget = Budget.create({
+      companyId: "company-1",
+      costCenterId: "cc-marketing",
+      ...period,
+    }).value!;
+    const categoryBudget = Budget.create({
+      companyId: "company-1",
+      category: expenseCategory,
+      ...period,
+    }).value!;
+
+    const affected = service.budgetsAffectedBy(
+      [costCenterBudget, categoryBudget],
+      hierarchy,
+      "category-food",
+    );
+
+    assert.deepEqual(
+      affected.map((budget) => budget.id),
+      [categoryBudget.id],
+    );
+  });
+});

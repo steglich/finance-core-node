@@ -292,6 +292,8 @@ export interface CreateTransactionRequest {
   tags?: string[] | undefined;
   installments?: number | undefined;
   cardId?: string | undefined;
+  costCenterId?: string | undefined;
+  personId?: string | undefined;
   exchangeRate?:
     | { sourceCurrency: string; targetCurrency: string; rate: number; date: Date }
     | undefined;
@@ -357,6 +359,12 @@ export function validateCreateTransactionRequest(
   const cardId = optionalString(b, "cardId");
   if (cardId === null) return invalid("cardId must be a string");
 
+  const costCenterId = optionalString(b, "costCenterId");
+  if (costCenterId === null) return invalid("costCenterId must be a string");
+
+  const personId = optionalString(b, "personId");
+  if (personId === null) return invalid("personId must be a string");
+
   const exchangeRate = parseExchangeRate(b.exchangeRate);
   if (exchangeRate === null) {
     return invalid(
@@ -370,6 +378,8 @@ export function validateCreateTransactionRequest(
       accountId,
       cardId: cardId || undefined,
       categoryId: categoryId || undefined,
+      costCenterId: costCenterId || undefined,
+      personId: personId || undefined,
       type,
       grossAmount,
       discount,
@@ -418,6 +428,7 @@ export interface UpdateTransactionRequest {
   interest?: number | undefined;
   penalty?: number | undefined;
   categoryId?: string | undefined;
+  costCenterId?: string | null | undefined;
   date?: Date | undefined;
   competence?: Date | undefined;
   description?: string | undefined;
@@ -445,6 +456,13 @@ export function validateUpdateTransactionRequest(
   const categoryId = optionalString(b, "categoryId");
   if (categoryId === null) return invalid("categoryId must be a string");
 
+  // `null` clears the classification; `undefined` leaves it untouched.
+  const costCenterId =
+    b.costCenterId === null ? null : optionalString(b, "costCenterId");
+  if (costCenterId === null && b.costCenterId !== null) {
+    return invalid("costCenterId must be a string");
+  }
+
   const date = parseDate(b.date);
   if (date === null) return invalid("date must be an ISO date");
 
@@ -465,6 +483,7 @@ export function validateUpdateTransactionRequest(
       interest,
       penalty,
       categoryId,
+      costCenterId,
       date,
       competence,
       description,
@@ -481,6 +500,8 @@ export interface TransactionQueryRequest {
   from?: Date | undefined;
   to?: Date | undefined;
   tag?: string | undefined;
+  costCenterId?: string | undefined;
+  personId?: string | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }
@@ -520,6 +541,8 @@ export function validateTransactionQuery(
       from,
       to,
       tag: optionalString(q, "tag") || undefined,
+      costCenterId: optionalString(q, "costCenterId") || undefined,
+      personId: optionalString(q, "personId") || undefined,
       ...pagination.data,
     },
   };
@@ -1092,7 +1115,8 @@ export function validateInvoicePaymentRequest(
 /* -------------------------------------------------------------------------- */
 
 export interface CreateBudgetRequest {
-  categoryId: string;
+  categoryId?: string | undefined;
+  costCenterId?: string | undefined;
   periodStart: Date;
   periodEnd: Date;
   plannedAmount: number;
@@ -1105,8 +1129,16 @@ export function validateCreateBudgetRequest(
   const b = asObject(body);
   if (!b) return invalid("Invalid request body");
 
-  const categoryId = requiredString(b, "categoryId");
-  if (!categoryId) return invalid("categoryId is required");
+  const categoryId = optionalString(b, "categoryId");
+  if (categoryId === null) return invalid("categoryId must be a string");
+
+  const costCenterId = optionalString(b, "costCenterId");
+  if (costCenterId === null) return invalid("costCenterId must be a string");
+
+  // A budget measures spending along at least one dimension.
+  if (!categoryId && !costCenterId) {
+    return invalid("Either categoryId or costCenterId is required");
+  }
 
   const periodStart = parseDate(b.periodStart);
   if (periodStart === null || periodStart === undefined) {
@@ -1136,7 +1168,8 @@ export function validateCreateBudgetRequest(
   return {
     success: true,
     data: {
-      categoryId,
+      categoryId: categoryId || undefined,
+      costCenterId: costCenterId || undefined,
       periodStart,
       periodEnd,
       plannedAmount,
@@ -1307,6 +1340,7 @@ export interface DashboardQuery {
   start: Date;
   end: Date;
   accountIds?: string[] | undefined;
+  costCenterIds?: string[] | undefined;
 }
 
 export function validateDashboardQuery(
@@ -1326,6 +1360,11 @@ export function validateDashboardQuery(
     return invalid("accountIds must be a list of strings");
   }
 
+  const costCenterIds = parseIdList(q.costCenterIds ?? q.costCenterId);
+  if (costCenterIds === null) {
+    return invalid("costCenterIds must be a list of strings");
+  }
+
   // No period supplied means the current month.
   const period =
     start === undefined || end === undefined
@@ -1338,7 +1377,7 @@ export function validateDashboardQuery(
 
   return {
     success: true,
-    data: { start: period.start, end: period.end, accountIds },
+    data: { start: period.start, end: period.end, accountIds, costCenterIds },
   };
 }
 
@@ -1348,6 +1387,9 @@ export const REPORT_TYPES = [
   "by-category",
   "by-card",
   "by-account",
+  "by-cost-center",
+  "receivables",
+  "payables",
 ] as const;
 
 export type ReportType = (typeof REPORT_TYPES)[number];
@@ -1357,6 +1399,11 @@ export interface ReportQuery {
   start: Date;
   end: Date;
   accountIds?: string[] | undefined;
+  costCenterIds?: string[] | undefined;
+  /** Record-level filters of the receivables and payables reports. */
+  personId?: string | undefined;
+  categoryId?: string | undefined;
+  status?: string | undefined;
 }
 
 export function validateReportQuery(
@@ -1381,6 +1428,11 @@ export function validateReportQuery(
       start: period.data.start,
       end: period.data.end,
       accountIds: period.data.accountIds,
+      costCenterIds: period.data.costCenterIds,
+      personId: optionalString(asObject(query) ?? {}, "personId") || undefined,
+      categoryId:
+        optionalString(asObject(query) ?? {}, "categoryId") || undefined,
+      status: optionalString(asObject(query) ?? {}, "status") || undefined,
     },
   };
 }

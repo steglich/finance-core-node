@@ -18,6 +18,18 @@ export interface ReportingScope {
   start: Date;
   end: Date;
   accountIds?: readonly string[] | undefined;
+  /**
+   * Restricts the read to these cost centers and their descendants. Absent
+   * means every cost center, including the unclassified transactions.
+   */
+  costCenterIds?: readonly string[] | undefined;
+  /**
+   * Record-level filters used by the receivables and payables reports, which
+   * read charges and payables rather than transactions.
+   */
+  personId?: string | undefined;
+  categoryId?: string | undefined;
+  status?: string | undefined;
 }
 
 export interface PeriodIndicators {
@@ -72,6 +84,63 @@ export interface BudgetSummary {
   exceeded: number;
 }
 
+/**
+ * What is owed to the company, and what the company owes, over a period.
+ * Penalty and interest on the overdue charges are included in `overdue`.
+ */
+export interface ReceivablesSummary {
+  openCount: number;
+  openTotal: number;
+  overdueCount: number;
+  overdueTotal: number;
+  receivedTotal: number;
+  currency: string;
+}
+
+export interface PayablesSummary {
+  openCount: number;
+  openTotal: number;
+  overdueCount: number;
+  overdueTotal: number;
+  paidTotal: number;
+  currency: string;
+}
+
+/**
+ * One line of the by-cost-center report. `costCenterId` is null for the
+ * "Sem classificação" group.
+ */
+export interface CostCenterReportRow {
+  costCenterId: string | null;
+  costCenterName: string;
+  /** Charged to this cost center alone. */
+  ownAmount: number;
+  /** This cost center plus every descendant — what the report shows. */
+  totalAmount: number;
+  percent: number;
+}
+
+/**
+ * One line of the receivables or payables report.
+ */
+export interface ReceivableReportRow {
+  id: string;
+  personId: string;
+  personName: string;
+  description?: string | undefined;
+  status: string;
+  dueDate: Date;
+  amount: number;
+  /** Penalty plus interest at the reference date; zero for payables. */
+  charges: number;
+  totalDue: number;
+  /** Payables only: how the obligation is classified. */
+  categoryId?: string | undefined;
+  costCenterId?: string | undefined;
+  /** Amount already settled, from the receipt or payment records. */
+  settledAmount: number;
+}
+
 export interface GoalSummary {
   activeCount: number;
   target: number;
@@ -119,4 +188,28 @@ export interface ReportingRepository {
   spendingByCard(scope: ReportingScope): Promise<SpendingRow[]>;
 
   spendingByAccount(scope: ReportingScope): Promise<SpendingRow[]>;
+
+  /**
+   * Confirmed expenses grouped by cost center, with each subtree rolled up into
+   * its root and the unclassified transactions in their own group.
+   */
+  spendingByCostCenter(scope: ReportingScope): Promise<CostCenterReportRow[]>;
+
+  receivablesSummary(scope: ReportingScope): Promise<ReceivablesSummary>;
+
+  payablesSummary(scope: ReportingScope): Promise<PayablesSummary>;
+
+  /**
+   * Charges falling due inside the period, with the amounts derived for
+   * `referenceDate`.
+   */
+  receivables(
+    scope: ReportingScope,
+    referenceDate: Date,
+  ): Promise<ReceivableReportRow[]>;
+
+  /**
+   * Payables falling due inside the period.
+   */
+  payables(scope: ReportingScope): Promise<ReceivableReportRow[]>;
 }

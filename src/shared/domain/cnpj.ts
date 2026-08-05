@@ -1,5 +1,5 @@
-import { ValueObject } from "../../shared/domain/value-object.js";
-import { DomainError } from "../../shared/domain/domain-error.js";
+import { ValueObject } from "./value-object.js";
+import { DomainError } from "./domain-error.js";
 
 /**
  * CNPJ (Cadastro Nacional da Pessoa Jurídica) value object.

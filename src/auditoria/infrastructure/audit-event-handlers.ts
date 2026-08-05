@@ -56,11 +56,35 @@ export const PHASE_2_EVENT_TYPES = [
 ] as const;
 
 /**
+ * Domain events added by Phase 3: people, charges and payables.
+ */
+export const PHASE_3_EVENT_TYPES = [
+  "PersonRegistered",
+  "PersonEdited",
+  "PersonRoleChanged",
+  "PersonDeactivated",
+  "CostCenterCreated",
+  "CostCenterEdited",
+  "CostCenterDeactivated",
+  "ChargeEdited",
+  "PayableEdited",
+  "ChargeIssued",
+  "ChargePaid",
+  "ChargeOverdue",
+  "ChargeCancelled",
+  "PayableRegistered",
+  "PayablePaid",
+  "PayableOverdue",
+  "PayableCancelled",
+] as const;
+
+/**
  * Every event the audit trail mirrors.
  */
 export const AUDITED_EVENT_TYPES = [
   ...PHASE_1_EVENT_TYPES,
   ...PHASE_2_EVENT_TYPES,
+  ...PHASE_3_EVENT_TYPES,
 ] as const;
 
 /**
@@ -108,6 +132,26 @@ const AUDITED_EVENTS: Readonly<
   GoalCreated: { entityType: "Goal", operation: "CREATE" },
   ContributionMade: { entityType: "Goal", operation: "UPDATE" },
   GoalAchieved: { entityType: "Goal", operation: "STATUS_CHANGE" },
+  PersonRegistered: { entityType: "Person", operation: "CREATE" },
+  PersonEdited: { entityType: "Person", operation: "UPDATE" },
+  PersonRoleChanged: { entityType: "Person", operation: "UPDATE" },
+  PersonDeactivated: { entityType: "Person", operation: "STATUS_CHANGE" },
+  CostCenterCreated: { entityType: "CostCenter", operation: "CREATE" },
+  CostCenterEdited: { entityType: "CostCenter", operation: "UPDATE" },
+  CostCenterDeactivated: {
+    entityType: "CostCenter",
+    operation: "STATUS_CHANGE",
+  },
+  ChargeEdited: { entityType: "Charge", operation: "UPDATE" },
+  PayableEdited: { entityType: "Payable", operation: "UPDATE" },
+  ChargeIssued: { entityType: "Charge", operation: "CREATE" },
+  ChargePaid: { entityType: "Charge", operation: "STATUS_CHANGE" },
+  ChargeOverdue: { entityType: "Charge", operation: "STATUS_CHANGE" },
+  ChargeCancelled: { entityType: "Charge", operation: "STATUS_CHANGE" },
+  PayableRegistered: { entityType: "Payable", operation: "CREATE" },
+  PayablePaid: { entityType: "Payable", operation: "STATUS_CHANGE" },
+  PayableOverdue: { entityType: "Payable", operation: "STATUS_CHANGE" },
+  PayableCancelled: { entityType: "Payable", operation: "STATUS_CHANGE" },
 };
 
 /**

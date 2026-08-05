@@ -3,13 +3,14 @@ import type { Money } from "./money.js";
 import type { Period } from "./period.js";
 
 /**
- * Raised when a budget is created for a category and period.
+ * Raised when a budget is created for a period and at least one dimension.
  */
 export class BudgetCreated extends DomainEvent<string> {
   constructor(
     aggregateId: string,
     readonly companyId: string,
-    readonly categoryId: string,
+    readonly categoryId: string | undefined,
+    readonly costCenterId: string | undefined,
     readonly period: Period,
     readonly plannedAmount: Money,
   ) {
@@ -29,7 +30,7 @@ export class BudgetExceeded extends DomainEvent<string> {
   constructor(
     aggregateId: string,
     readonly companyId: string,
-    readonly categoryId: string,
+    readonly categoryId: string | undefined,
     readonly period: Period,
     readonly plannedAmount: Money,
     readonly actualAmount: Money,
@@ -50,7 +51,7 @@ export class BudgetPeriodClosed extends DomainEvent<string> {
   constructor(
     aggregateId: string,
     readonly companyId: string,
-    readonly categoryId: string,
+    readonly categoryId: string | undefined,
     readonly period: Period,
     readonly plannedAmount: Money,
     readonly actualAmount: Money,

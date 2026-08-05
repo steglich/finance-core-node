@@ -23,6 +23,14 @@ import { KnexInvoiceRepository } from "./financeiro/infrastructure/knex-invoice-
 import { KnexBudgetRepository } from "./financeiro/infrastructure/knex-budget-repository.js";
 import { KnexGoalRepository } from "./financeiro/infrastructure/knex-goal-repository.js";
 import { KnexReportingRepository } from "./financeiro/infrastructure/knex-reporting-repository.js";
+import { KnexPersonRepository } from "./cadastros/infrastructure/knex-person-repository.js";
+import { KnexCostCenterRepository } from "./cadastros/infrastructure/knex-cost-center-repository.js";
+import { KnexChargeRepository } from "./pagamentos/infrastructure/knex-charge-repository.js";
+import { KnexPayableRepository } from "./pagamentos/infrastructure/knex-payable-repository.js";
+import { KnexLedgerRepository } from "./pagamentos/infrastructure/knex-ledger-repository.js";
+import { KnexPixRepository } from "./pagamentos/infrastructure/knex-pix-repository.js";
+import { ChargeReceiptService } from "./pagamentos/domain/charge-receipt-service.js";
+import { PayableSettlementService } from "./pagamentos/domain/payable-settlement-service.js";
 import { registerBudgetHandlers } from "./financeiro/infrastructure/budget-event-handlers.js";
 import { TransferService } from "./financeiro/domain/transfer-service.js";
 import { BudgetService } from "./financeiro/domain/budget-service.js";
@@ -42,6 +50,12 @@ import { BudgetController } from "./financeiro/api/budget-controller.js";
 import { GoalController } from "./financeiro/api/goal-controller.js";
 import { DashboardController } from "./financeiro/api/dashboard-controller.js";
 import { ReportController } from "./financeiro/api/report-controller.js";
+import { PersonController } from "./cadastros/api/person-controller.js";
+import { CostCenterController } from "./cadastros/api/cost-center-controller.js";
+import { ChargeController } from "./pagamentos/api/charge-controller.js";
+import { PayableController } from "./pagamentos/api/payable-controller.js";
+import { PixController } from "./pagamentos/api/pix-controller.js";
+import { LedgerController } from "./pagamentos/api/ledger-controller.js";
 import { AuthController } from "./identity/api/auth-controller.js";
 import { CompanyController } from "./identity/api/company-controller.js";
 import { ProfileController } from "./identity/api/profile-controller.js";
@@ -116,6 +130,12 @@ export class AppServer {
     const budgetRepository = new KnexBudgetRepository(knex);
     const goalRepository = new KnexGoalRepository(knex);
     const reportingRepository = new KnexReportingRepository(knex);
+    const personRepository = new KnexPersonRepository(knex);
+    const costCenterRepository = new KnexCostCenterRepository(knex);
+    const chargeRepository = new KnexChargeRepository(knex);
+    const payableRepository = new KnexPayableRepository(knex);
+    const ledgerRepository = new KnexLedgerRepository(knex);
+    const pixRepository = new KnexPixRepository(knex);
     const auditRepository = new KnexAuditRepository(knex);
     const eventLogRepository = new KnexDomainEventLogRepository(knex);
     const accessLogRepository = new KnexAccessLogRepository(knex);
@@ -128,6 +148,31 @@ export class AppServer {
     const invoiceAssignmentService = new InvoiceAssignmentService();
     const invoiceClosingService = new InvoiceClosingService();
     const invoicePaymentService = new InvoicePaymentService();
+    const chargeReceiptService = new ChargeReceiptService();
+    const payableSettlementService = new PayableSettlementService();
+
+    // Bridges the registry context to the payments one without an import
+    // between them: `cadastros` asks the question, the adapter answers it.
+    // Transactions born from a settlement are not editable; the check reaches
+    // the payments context through a port so `financeiro` keeps no import of it.
+    const settlementOriginChecker = {
+      isFromSettlement: async (companyId: string, transactionId: string) =>
+        (await chargeRepository.isReceiptTransaction(
+          companyId,
+          transactionId,
+        )) ||
+        (await payableRepository.isPaymentTransaction(
+          companyId,
+          transactionId,
+        )),
+    };
+
+    const openRecordsProvider = {
+      countOpenCharges: (companyId: string, personId: string) =>
+        chargeRepository.hasOpenCharges(companyId, personId),
+      countOpenPayables: (companyId: string, personId: string) =>
+        payableRepository.hasOpenPayables(companyId, personId),
+    };
     const eventBus = new DomainEventBus();
 
     // Every Phase 1 domain event is mirrored into the audit trail (RN-09)
@@ -184,6 +229,9 @@ export class AppServer {
       cardRepository,
       invoiceRepository,
       eventBus,
+      costCenterRepository,
+      personRepository,
+      settlementOriginChecker,
       invoiceAssignmentService,
     );
     const installmentController = new InstallmentController(
@@ -224,6 +272,7 @@ export class AppServer {
       categoryRepository,
       accountRepository,
       eventBus,
+      costCenterRepository,
     );
     const goalController = new GoalController(
       goalRepository,
@@ -233,6 +282,45 @@ export class AppServer {
     const dashboardController = new DashboardController(reportingRepository);
     const reportController = new ReportController(reportingRepository);
 
+    const personController = new PersonController(
+      personRepository,
+      openRecordsProvider,
+      eventBus,
+    );
+    const costCenterController = new CostCenterController(
+      costCenterRepository,
+      eventBus,
+    );
+    const chargeController = new ChargeController(
+      chargeRepository,
+      personRepository,
+      accountRepository,
+      transactionRepository,
+      chargeReceiptService,
+      eventBus,
+    );
+    const payableController = new PayableController(
+      payableRepository,
+      personRepository,
+      categoryRepository,
+      accountRepository,
+      transactionRepository,
+      payableSettlementService,
+      eventBus,
+    );
+    const pixController = new PixController(
+      pixRepository,
+      chargeRepository,
+      personRepository,
+      accountRepository,
+      transactionRepository,
+      chargeReceiptService,
+      eventBus,
+    );
+    const ledgerController = new LedgerController(
+      ledgerRepository,
+      personRepository,
+    );
     const auditController = new AuditController(
       auditRepository,
       eventLogRepository,
@@ -262,6 +350,12 @@ export class AppServer {
       goalController,
       dashboardController,
       reportController,
+      personController,
+      costCenterController,
+      ledgerController,
+      chargeController,
+      payableController,
+      pixController,
       auditController,
       requireAuditManage: requirePermission("audit", "MANAGE"),
       authenticate: createAuthenticate(jwtTokenService),

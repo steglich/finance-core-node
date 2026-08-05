@@ -93,6 +93,10 @@ export class ReportController {
       start: validation.data.start,
       end: validation.data.end,
       accountIds: validation.data.accountIds,
+      costCenterIds: validation.data.costCenterIds,
+      personId: validation.data.personId,
+      categoryId: validation.data.categoryId,
+      status: validation.data.status,
     };
 
     const table = await this.tableFor(validation.data.type, scope);
@@ -127,7 +131,125 @@ export class ReportController {
           "Conta",
           await this.reporting.spendingByAccount(scope),
         );
+      case "by-cost-center":
+        return this.costCenterTable(scope);
+      case "receivables":
+        return this.receivablesTable(scope);
+      case "payables":
+        return this.payablesTable(scope);
     }
+  }
+
+  /**
+   * Spending by cost center. Each line already carries its subtree, so the
+   * "próprio" column is what distinguishes a parent's own spending from what
+   * rolled up into it.
+   */
+  private async costCenterTable(scope: ReportingScope): Promise<CsvTable> {
+    const rows = await this.reporting.spendingByCostCenter(scope);
+
+    return {
+      columns: [
+        "Centro de custo",
+        "Valor próprio",
+        "Valor com filhos",
+        "% do total",
+      ],
+      rows: rows.map((row) => [
+        row.costCenterName,
+        row.ownAmount,
+        row.totalAmount,
+        row.percent,
+      ]),
+    };
+  }
+
+  private async receivablesTable(scope: ReportingScope): Promise<CsvTable> {
+    const rows = await this.reporting.receivables(scope, new Date());
+
+    const totalFor = (statuses: readonly string[]): number =>
+      Number(
+        rows
+          .filter((row) => statuses.includes(row.status))
+          .reduce((sum, row) => sum + row.totalDue, 0)
+          .toFixed(2),
+      );
+
+    const received = Number(
+      rows.reduce((sum, row) => sum + row.settledAmount, 0).toFixed(2),
+    );
+
+    const blank = ["", "", "", "", "", ""];
+
+    return {
+      columns: [
+        "Cliente",
+        "Descrição",
+        "Situação",
+        "Vencimento",
+        "Valor original",
+        "Multa e juros",
+        "Total devido",
+      ],
+      rows: [
+        ...rows.map((row) => [
+          row.personName,
+          row.description ?? "",
+          row.status,
+          row.dueDate.toISOString().slice(0, 10),
+          row.amount,
+          row.charges,
+          row.totalDue,
+        ]),
+        ["Total emitido", ...blank.slice(0, 5), totalFor(["ISSUED"])],
+        ["Total vencido", ...blank.slice(0, 5), totalFor(["OVERDUE"])],
+        ["Total recebido", ...blank.slice(0, 5), received],
+      ],
+    };
+  }
+
+  private async payablesTable(scope: ReportingScope): Promise<CsvTable> {
+    const rows = await this.reporting.payables(scope);
+
+    const totalFor = (statuses: readonly string[]): number =>
+      Number(
+        rows
+          .filter((row) => statuses.includes(row.status))
+          .reduce((sum, row) => sum + row.amount, 0)
+          .toFixed(2),
+      );
+
+    const paid = Number(
+      rows.reduce((sum, row) => sum + row.settledAmount, 0).toFixed(2),
+    );
+
+    const blank = ["", "", "", "", "", ""];
+
+    return {
+      columns: [
+        "Fornecedor",
+        "Descrição",
+        "Situação",
+        "Vencimento",
+        "Categoria",
+        "Centro de custo",
+        "Valor",
+      ],
+      rows: [
+        ...rows.map((row) => [
+          row.personName,
+          row.description ?? "",
+          row.status,
+          row.dueDate.toISOString().slice(0, 10),
+          row.categoryId ?? "",
+          row.costCenterId ?? "",
+          row.amount,
+        ]),
+        ["Total pendente", ...blank.slice(0, 5), totalFor(["PENDING"])],
+        ["Total vencido", ...blank.slice(0, 5), totalFor(["OVERDUE"])],
+        ["Total pago", ...blank.slice(0, 5), paid],
+      ],
+    };
   }
 
   private async cashFlowTable(scope: ReportingScope): Promise<CsvTable> {

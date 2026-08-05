@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Email } from "../../identity/domain/email.js";
+import { Email } from "../../shared/domain/email.js";
 import { Password } from "../../identity/domain/password.js";
 import { DomainError } from "../../shared/domain/domain-error.js";
 import { ExchangeRate } from "./exchange-rate.js";

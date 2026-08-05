@@ -71,6 +71,8 @@ function toTransaction(
     transferId: (row.transfer_id as string | null) ?? undefined,
     cardId: (row.card_id as string | null) ?? undefined,
     invoiceId: (row.invoice_id as string | null) ?? undefined,
+    costCenterId: (row.cost_center_id as string | null) ?? undefined,
+    personId: (row.person_id as string | null) ?? undefined,
     createdAt: new Date(row.created_at as string),
   });
 }
@@ -131,6 +133,8 @@ export class KnexTransactionRepository implements TransactionRepository {
       transfer_id: transaction.transferId ?? null,
       card_id: transaction.cardId ?? null,
       invoice_id: transaction.invoiceId ?? null,
+      cost_center_id: transaction.costCenterId ?? null,
+      person_id: transaction.personId ?? null,
     };
   }
 
@@ -207,6 +211,10 @@ export class KnexTransactionRepository implements TransactionRepository {
     }
     if (filter.cardId) base.andWhere("card_id", filter.cardId);
     if (filter.invoiceId) base.andWhere("invoice_id", filter.invoiceId);
+    if (filter.costCenterId) {
+      base.andWhere("cost_center_id", filter.costCenterId);
+    }
+    if (filter.personId) base.andWhere("person_id", filter.personId);
     if (filter.tag) {
       base.whereIn(
         "transactions.id",

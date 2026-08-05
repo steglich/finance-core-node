@@ -37,12 +37,17 @@ export interface BudgetRepository {
   findPeriodsToClose(referenceDate: Date): Promise<Budget[]>;
 
   /**
-   * Rejects a second active budget on the same category with an overlapping
-   * period.
+   * Rejects a second active budget measuring the same thing over an
+   * overlapping period. "The same thing" is the whole dimension combination:
+   * a category budget and a cost center budget do not collide, and neither do
+   * two category budgets under different cost centers.
    */
   existsOverlapping(
     companyId: string,
-    categoryId: string,
+    dimensions: {
+      categoryId?: string | undefined;
+      costCenterId?: string | undefined;
+    },
     period: { start: Date; end: Date },
     excludeBudgetId?: string,
   ): Promise<boolean>;

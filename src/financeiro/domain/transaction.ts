@@ -82,6 +82,10 @@ export interface TransactionProps {
   transferId?: string | undefined;
   cardId?: string | undefined;
   invoiceId?: string | undefined;
+  /** Cost center this transaction is charged to (Phase 3, optional). */
+  costCenterId?: string | undefined;
+  /** Customer or supplier this transaction relates to (Phase 3, optional). */
+  personId?: string | undefined;
   createdAt?: Date;
 }
 
@@ -109,6 +113,8 @@ export interface CreateTransactionInput {
   transferId?: string | undefined;
   cardId?: string | undefined;
   invoiceId?: string | undefined;
+  costCenterId?: string | undefined;
+  personId?: string | undefined;
 }
 
 /**
@@ -120,6 +126,7 @@ export interface EditTransactionInput {
   interest?: number | undefined;
   penalty?: number | undefined;
   categoryId?: string | undefined;
+  costCenterId?: string | null | undefined;
   date?: Date | undefined;
   competence?: Date | undefined;
   description?: string | undefined;
@@ -171,6 +178,8 @@ export class Transaction extends AggregateRoot<string> {
   private readonly _transferId: string | undefined;
   private readonly _cardId: string | undefined;
   private _invoiceId: string | undefined;
+  private _costCenterId: string | undefined;
+  private readonly _personId: string | undefined;
   private _categoryId: string | undefined;
   private _status: TransactionStatus;
   private _grossAmount: Money;
@@ -252,6 +261,8 @@ export class Transaction extends AggregateRoot<string> {
     this._transferId = props.transferId;
     this._cardId = props.cardId;
     this._invoiceId = props.invoiceId;
+    this._costCenterId = props.costCenterId;
+    this._personId = props.personId;
 
     this.assertAmountsAreValid();
   }
@@ -383,6 +394,22 @@ export class Transaction extends AggregateRoot<string> {
    * Invoice that consolidates this purchase. Only credit card purchases get
    * one — a debit card charge behaves like any other expense.
    */
+  /**
+   * Cost center the amount is charged to. Purely a classification: it changes
+   * no amount, no balance and no state, exactly like the category.
+   */
+  get costCenterId(): string | undefined {
+    return this._costCenterId;
+  }
+
+  /**
+   * Customer or supplier behind the movement, when there is one.
+   * Immutable: it comes from the charge or payable that produced it.
+   */
+  get personId(): string | undefined {
+    return this._personId;
+  }
+
   get invoiceId(): string | undefined {
     return this._invoiceId;
   }
@@ -631,6 +658,19 @@ export class Transaction extends AggregateRoot<string> {
         this._categoryId = input.categoryId;
       }
 
+      if (input.costCenterId !== undefined) {
+        const next =
+          input.costCenterId === null ? undefined : input.costCenterId;
+        if (next !== this._costCenterId) {
+          changes.push({
+            field: "costCenterId",
+            oldValue: this._costCenterId,
+            newValue: next,
+          });
+          this._costCenterId = next;
+        }
+      }
+
       if (input.date !== undefined) {
         if (Number.isNaN(input.date.getTime())) {
           throw DomainError.create(
@@ -736,6 +776,8 @@ export class Transaction extends AggregateRoot<string> {
       transferId: this._transferId,
       cardId: this._cardId,
       invoiceId: this._invoiceId,
+      costCenterId: this._costCenterId,
+      personId: this._personId,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -805,6 +847,8 @@ export class Transaction extends AggregateRoot<string> {
         transferId: input.transferId,
         cardId: input.cardId,
         invoiceId: input.invoiceId,
+        costCenterId: input.costCenterId,
+        personId: input.personId,
       });
 
       transaction.raiseEvent(

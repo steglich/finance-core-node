@@ -29,6 +29,7 @@ export class DashboardController {
       start: validation.data.start,
       end: validation.data.end,
       accountIds: validation.data.accountIds,
+      costCenterIds: validation.data.costCenterIds,
     };
 
     // Several independent aggregations — running them in parallel is what keeps
@@ -40,13 +41,21 @@ export class DashboardController {
       budgets,
       goals,
       cards,
+      receivables,
+      payables,
     ] = await Promise.all([
+      // Income, expense and result narrow with the cost center filter; net
+      // worth does not, because it sums account balances rather than the
+      // period's transactions, and a balance is not attributable to a cost
+      // center.
       this.reporting.periodIndicators(scope),
       this.reporting.spendingByCategory(scope),
       this.reporting.monthlySeries(scope),
       this.reporting.budgetSummary(scope),
       this.reporting.goalSummary(companyId),
       this.reporting.cardSummary(companyId),
+      this.reporting.receivablesSummary(scope),
+      this.reporting.payablesSummary(scope),
     ]);
 
     return {
@@ -54,10 +63,11 @@ export class DashboardController {
       body: {
         period: { start: scope.start, end: scope.end },
         accountIds: scope.accountIds ?? null,
+        costCenterIds: scope.costCenterIds ?? null,
         indicators,
         spendingByCategory,
         monthlySeries,
-        summaries: { budgets, goals, cards },
+        summaries: { budgets, goals, cards, receivables, payables },
       },
     };
   }

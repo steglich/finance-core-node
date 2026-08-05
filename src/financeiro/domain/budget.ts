@@ -53,7 +53,8 @@ export interface BudgetProgress {
 export interface BudgetProps {
   id: string;
   companyId: string;
-  categoryId: string;
+  categoryId?: string | undefined;
+  costCenterId?: string | undefined;
   period: Period;
   plannedAmount: Money;
   currency: string;
@@ -70,7 +71,8 @@ export interface BudgetProps {
 export interface CreateBudgetInput {
   id?: string;
   companyId: string;
-  category: BudgetCategory;
+  category?: BudgetCategory | undefined;
+  costCenterId?: string | undefined;
   periodStart: Date;
   periodEnd: Date;
   plannedAmount: number;
@@ -79,6 +81,10 @@ export interface CreateBudgetInput {
 
 /**
  * Fields that may be changed while the period is open.
+ *
+ * The dimensions are deliberately absent: moving a budget to another category
+ * or cost center would silently rewrite what it was measuring, and the figures
+ * already reported against it would stop meaning anything.
  */
 export interface EditBudgetInput {
   plannedAmount?: number | undefined;
@@ -95,7 +101,8 @@ export interface EditBudgetInput {
  */
 export class Budget extends AggregateRoot<string> {
   private readonly _companyId: string;
-  private readonly _categoryId: string;
+  private readonly _categoryId: string | undefined;
+  private readonly _costCenterId: string | undefined;
   private readonly _period: Period;
   private readonly _currency: string;
   private _plannedAmount: Money;
@@ -116,8 +123,16 @@ export class Budget extends AggregateRoot<string> {
       );
     }
 
-    if (props.categoryId.trim().length === 0) {
-      throw DomainError.create("VALIDATION_ERROR", "Budget requires a category");
+    const categoryId = props.categoryId?.trim() || undefined;
+    const costCenterId = props.costCenterId?.trim() || undefined;
+
+    // A budget measures spending along at least one dimension; with neither it
+    // would be measuring the whole company, which is not what a budget is.
+    if (!categoryId && !costCenterId) {
+      throw DomainError.create(
+        "VALIDATION_ERROR",
+        "Budget requires a category, a cost center, or both",
+      );
     }
 
     if (!isSupportedCurrency(currency)) {
@@ -150,7 +165,8 @@ export class Budget extends AggregateRoot<string> {
     }
 
     this._companyId = props.companyId;
-    this._categoryId = props.categoryId;
+    this._categoryId = categoryId;
+    this._costCenterId = costCenterId;
     this._period = props.period;
     this._currency = currency;
     this._plannedAmount = props.plannedAmount;
@@ -164,8 +180,18 @@ export class Budget extends AggregateRoot<string> {
     return this._companyId;
   }
 
-  get categoryId(): string {
+  /**
+   * Category dimension, when the budget has one.
+   */
+  get categoryId(): string | undefined {
     return this._categoryId;
+  }
+
+  /**
+   * Cost center dimension, when the budget has one.
+   */
+  get costCenterId(): string | undefined {
+    return this._costCenterId;
   }
 
   get period(): Period {
@@ -399,6 +425,7 @@ export class Budget extends AggregateRoot<string> {
       id: this.id,
       companyId: this._companyId,
       categoryId: this._categoryId,
+      costCenterId: this._costCenterId,
       periodStart: this._period.startDate,
       periodEnd: this._period.endDate,
       plannedAmount: this._plannedAmount.amount,
@@ -417,27 +444,36 @@ export class Budget extends AggregateRoot<string> {
    */
   static create(input: CreateBudgetInput): Result<Budget> {
     try {
-      const { category } = input;
+      const { category, costCenterId } = input;
 
-      if (!category || category.id.trim().length === 0) {
+      if (!category && !costCenterId) {
         throw DomainError.create(
           "VALIDATION_ERROR",
-          "Budget requires a category",
+          "Budget requires a category, a cost center, or both",
         );
       }
 
-      if (category.companyId !== input.companyId) {
-        throw DomainError.create(
-          "UNAUTHORIZED_ACCESS",
-          "A budget can only target a category of the same company",
-        );
-      }
+      if (category) {
+        if (category.id.trim().length === 0) {
+          throw DomainError.create(
+            "VALIDATION_ERROR",
+            "Budget requires a valid category",
+          );
+        }
 
-      if (category.type !== "EXPENSE") {
-        throw DomainError.create(
-          "VALIDATION_ERROR",
-          "A budget can only be created for an expense category",
-        );
+        if (category.companyId !== input.companyId) {
+          throw DomainError.create(
+            "UNAUTHORIZED_ACCESS",
+            "A budget can only target a category of the same company",
+          );
+        }
+
+        if (category.type !== "EXPENSE") {
+          throw DomainError.create(
+            "VALIDATION_ERROR",
+            "A budget can only be created for an expense category",
+          );
+        }
       }
 
       const period = Period.create(
@@ -448,7 +484,8 @@ export class Budget extends AggregateRoot<string> {
       const budget = new Budget({
         id: input.id ?? randomUUID(),
         companyId: input.companyId,
-        categoryId: category.id,
+        categoryId: category?.id,
+        costCenterId,
         period,
         plannedAmount: Money.create(input.plannedAmount, input.currency),
         currency: input.currency,
@@ -459,6 +496,7 @@ export class Budget extends AggregateRoot<string> {
           budget.id,
           budget.companyId,
           budget.categoryId,
+          budget.costCenterId,
           period,
           budget.plannedAmount,
         ),
