@@ -488,19 +488,39 @@ async function buildHarness(companyId = COMPANY_ID): Promise<Harness> {
     { get: () => async () => ({ statusCode: 501, body: {} }) },
   ) as never;
 
+  // Phase 1 routes never touch cards or invoices; empty repositories keep the
+  // transaction controller on its non-card path.
+  const cards = {
+    findById: async () => null,
+    findByCompany: async () => [],
+    findByAccount: async () => [],
+    countActiveByAccount: async () => 0,
+  } as never;
+  const invoices = {
+    findById: async () => null,
+    findByCard: async () => [],
+    findOpenByCard: async () => null,
+    listPayments: async () => [],
+    countOpenByCard: async () => 0,
+    countUnpaidByCard: async () => 0,
+    countUnpaidByAccount: async () => 0,
+  } as never;
+
   await registerRoutes(app, {
     authController: stub,
     companyController: stub,
     profileController: stub,
     auditController: stub,
     requireAuditManage: (async () => undefined) as never,
-    accountController: new AccountController(accounts, wallets),
+    accountController: new AccountController(accounts, wallets, cards, invoices),
     categoryController: new CategoryController(categories, transactions),
     transactionController: new TransactionController(
       transactions,
       accounts,
       categories,
       installments,
+      cards,
+      invoices,
       eventBus,
     ),
     installmentController: new InstallmentController(
@@ -520,6 +540,12 @@ async function buildHarness(companyId = COMPANY_ID): Promise<Harness> {
       accounts,
       eventBus,
     ),
+    cardController: stub,
+    invoiceController: stub,
+    budgetController: stub,
+    goalController: stub,
+    dashboardController: stub,
+    reportController: stub,
     authenticate: (async (request: FastifyRequest) => {
       request.authContext = { userId: "user-1", companyId };
     }) as never,

@@ -32,11 +32,9 @@ export async function up(knex: Knex): Promise<void> {
       .references("id")
       .inTable("transactions")
       .onDelete("SET NULL"); // For installments
-    table
-      .uuid("transfer_id")
-      .references("id")
-      .inTable("transfers")
-      .onDelete("SET NULL"); // For transfers
+    // transactions and transfers reference each other, so this foreign key is
+    // added after both tables exist.
+    table.uuid("transfer_id"); // For transfers
     table.timestamp("created_at").defaultTo(knex.fn.now()).notNullable();
     table.timestamp("updated_at").defaultTo(knex.fn.now()).notNullable();
   });
@@ -137,9 +135,21 @@ export async function up(knex: Knex): Promise<void> {
       .onDelete("SET NULL");
     table.timestamp("created_at").defaultTo(knex.fn.now()).notNullable();
   });
+
+  // Closes the transactions <-> transfers cycle.
+  await knex.schema.alterTable("transactions", (table) => {
+    table
+      .foreign("transfer_id")
+      .references("id")
+      .inTable("transfers")
+      .onDelete("SET NULL");
+  });
 }
 
 export async function down(knex: Knex): Promise<void> {
+  await knex.schema.alterTable("transactions", (table) => {
+    table.dropForeign("transfer_id");
+  });
   await knex.schema.dropTable("transfers");
   await knex.schema.dropTable("recurrences");
   await knex.schema.dropTable("transaction_attachments");

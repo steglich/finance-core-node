@@ -80,6 +80,8 @@ export interface TransactionProps {
   tags?: readonly string[] | undefined;
   parentTransactionId?: string | undefined;
   transferId?: string | undefined;
+  cardId?: string | undefined;
+  invoiceId?: string | undefined;
   createdAt?: Date;
 }
 
@@ -105,6 +107,8 @@ export interface CreateTransactionInput {
   tags?: readonly string[] | undefined;
   parentTransactionId?: string | undefined;
   transferId?: string | undefined;
+  cardId?: string | undefined;
+  invoiceId?: string | undefined;
 }
 
 /**
@@ -141,6 +145,15 @@ function sameDay(a: Date, b: Date): boolean {
 }
 
 /**
+ * Whether the invoice this purchase belongs to has already closed. The
+ * transaction cannot know it on its own, so the caller — which loaded the
+ * invoice — supplies it.
+ */
+export interface BilledGuard {
+  invoiceClosed?: boolean | undefined;
+}
+
+/**
  * Transaction aggregate root.
  *
  * Owns the state machine (Pending → Confirmed → Refunded / Pending → Cancelled),
@@ -156,6 +169,8 @@ export class Transaction extends AggregateRoot<string> {
   private readonly _exchangeRate: ExchangeRate | undefined;
   private readonly _parentTransactionId: string | undefined;
   private readonly _transferId: string | undefined;
+  private readonly _cardId: string | undefined;
+  private _invoiceId: string | undefined;
   private _categoryId: string | undefined;
   private _status: TransactionStatus;
   private _grossAmount: Money;
@@ -235,6 +250,8 @@ export class Transaction extends AggregateRoot<string> {
     this._tags = normalizeTags(props.tags);
     this._parentTransactionId = props.parentTransactionId;
     this._transferId = props.transferId;
+    this._cardId = props.cardId;
+    this._invoiceId = props.invoiceId;
 
     this.assertAmountsAreValid();
   }
@@ -355,6 +372,50 @@ export class Transaction extends AggregateRoot<string> {
     return this._transferId;
   }
 
+  /**
+   * Card this expense is charged to, when there is one.
+   */
+  get cardId(): string | undefined {
+    return this._cardId;
+  }
+
+  /**
+   * Invoice that consolidates this purchase. Only credit card purchases get
+   * one — a debit card charge behaves like any other expense.
+   */
+  get invoiceId(): string | undefined {
+    return this._invoiceId;
+  }
+
+  /**
+   * RN-08: a credit card purchase does not move the account balance. The debit
+   * happens once, when the invoice that consolidates it is paid. Being linked to
+   * an invoice is exactly what marks a purchase as billed rather than paid.
+   */
+  get affectsAccountBalance(): boolean {
+    return this._invoiceId === undefined;
+  }
+
+  /**
+   * Binds the purchase to the open invoice of its cycle. A purchase belongs to
+   * exactly one invoice, so re-linking is rejected.
+   */
+  linkToInvoice(invoiceId: string): Result<Transaction> {
+    if (this._invoiceId !== undefined && this._invoiceId !== invoiceId) {
+      return Result.failed(
+        DomainError.create(
+          "INVALID_OPERATION",
+          `Transaction ${this.id} is already linked to invoice ${this._invoiceId}`,
+        ),
+      );
+    }
+
+    this._invoiceId = invoiceId;
+    this.setUpdatedAt();
+
+    return Result.success(this);
+  }
+
   get isPending(): boolean {
     return this._status === "PENDING";
   }
@@ -364,6 +425,23 @@ export class Transaction extends AggregateRoot<string> {
    */
   get direction(): "CREDIT" | "DEBIT" {
     return this._type === "INCOME" ? "CREDIT" : "DEBIT";
+  }
+
+  /**
+   * A purchase consolidated into a closed invoice is frozen: removing the charge
+   * is done through a refund, which adjusts the invoice instead.
+   */
+  private ensureNotBilled(
+    options: BilledGuard,
+    operation: string,
+  ): DomainError | undefined {
+    if (options.invoiceClosed === true) {
+      return DomainError.create(
+        "INVALID_OPERATION",
+        `Transaction ${this.id} is linked to a closed invoice and cannot be ${operation}; refund it instead`,
+      );
+    }
+    return undefined;
   }
 
   /**
@@ -414,7 +492,12 @@ export class Transaction extends AggregateRoot<string> {
   /**
    * Pending → Cancelled. The record is preserved; nothing is deleted.
    */
-  cancel(reason?: string): Result<Transaction> {
+  cancel(reason?: string, options: BilledGuard = {}): Result<Transaction> {
+    const billed = this.ensureNotBilled(options, "cancelled");
+    if (billed) {
+      return Result.failed(billed);
+    }
+
     const error = this.ensureCanTransitionTo("CANCELLED");
     if (error) {
       return Result.failed(error);
@@ -482,7 +565,15 @@ export class Transaction extends AggregateRoot<string> {
    * Edits the allowed fields of a pending transaction, raising a
    * TransactionEdited event carrying the field-level diff for auditing.
    */
-  edit(input: EditTransactionInput): Result<readonly TransactionFieldChange[]> {
+  edit(
+    input: EditTransactionInput,
+    options: BilledGuard = {},
+  ): Result<readonly TransactionFieldChange[]> {
+    const billed = this.ensureNotBilled(options, "edited");
+    if (billed) {
+      return Result.failed(billed);
+    }
+
     if (this._status !== "PENDING") {
       return Result.failed(
         DomainError.create(
@@ -643,6 +734,8 @@ export class Transaction extends AggregateRoot<string> {
       tags: this.tags,
       parentTransactionId: this._parentTransactionId,
       transferId: this._transferId,
+      cardId: this._cardId,
+      invoiceId: this._invoiceId,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -710,6 +803,8 @@ export class Transaction extends AggregateRoot<string> {
         tags: input.tags,
         parentTransactionId: input.parentTransactionId,
         transferId: input.transferId,
+        cardId: input.cardId,
+        invoiceId: input.invoiceId,
       });
 
       transaction.raiseEvent(

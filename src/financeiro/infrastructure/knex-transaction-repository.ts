@@ -69,6 +69,8 @@ function toTransaction(
     parentTransactionId:
       (row.parent_transaction_id as string | null) ?? undefined,
     transferId: (row.transfer_id as string | null) ?? undefined,
+    cardId: (row.card_id as string | null) ?? undefined,
+    invoiceId: (row.invoice_id as string | null) ?? undefined,
     createdAt: new Date(row.created_at as string),
   });
 }
@@ -127,6 +129,8 @@ export class KnexTransactionRepository implements TransactionRepository {
       description: transaction.description ?? null,
       parent_transaction_id: transaction.parentTransactionId ?? null,
       transfer_id: transaction.transferId ?? null,
+      card_id: transaction.cardId ?? null,
+      invoice_id: transaction.invoiceId ?? null,
     };
   }
 
@@ -201,6 +205,8 @@ export class KnexTransactionRepository implements TransactionRepository {
     if (filter.parentTransactionId) {
       base.andWhere("parent_transaction_id", filter.parentTransactionId);
     }
+    if (filter.cardId) base.andWhere("card_id", filter.cardId);
+    if (filter.invoiceId) base.andWhere("invoice_id", filter.invoiceId);
     if (filter.tag) {
       base.whereIn(
         "transactions.id",

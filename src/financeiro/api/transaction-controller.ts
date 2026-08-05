@@ -3,12 +3,17 @@ import type { ControllerResult } from "../../shared/api/controller-result.js";
 import { DomainError } from "../../shared/domain/domain-error.js";
 import type { DomainEventBus } from "../../shared/domain/domain-event-bus.js";
 import type { Account } from "../domain/account.js";
+import type { Card } from "../domain/card.js";
 import { ExchangeRate } from "../domain/exchange-rate.js";
 import { Installment } from "../domain/installment.js";
+import type { Invoice } from "../domain/invoice.js";
+import { InvoiceAssignmentService } from "../domain/invoice-assignment-service.js";
 import { Transaction } from "../domain/transaction.js";
 import type { AccountRepository } from "../infrastructure/account-repository.js";
+import type { CardRepository } from "../infrastructure/card-repository.js";
 import type { CategoryRepository } from "../infrastructure/category-repository.js";
 import type { InstallmentRepository } from "../infrastructure/installment-repository.js";
+import type { InvoiceRepository } from "../infrastructure/invoice-repository.js";
 import type { TransactionRepository } from "../infrastructure/transaction-repository.js";
 import {
   validateAttachmentRequest,
@@ -28,7 +33,10 @@ export class TransactionController {
     private readonly accountRepository: AccountRepository,
     private readonly categoryRepository: CategoryRepository,
     private readonly installmentRepository: InstallmentRepository,
+    private readonly cardRepository: CardRepository,
+    private readonly invoiceRepository: InvoiceRepository,
     private readonly eventBus: DomainEventBus,
+    private readonly invoiceAssignment: InvoiceAssignmentService = new InvoiceAssignmentService(),
   ) {}
 
   /**
@@ -82,6 +90,7 @@ export class TransactionController {
       competence: input.competence,
       description: input.description,
       tags: input.tags,
+      cardId: input.cardId,
     });
 
     if (result.isFailure || !result.value) {
@@ -89,10 +98,24 @@ export class TransactionController {
     }
 
     const transaction = result.value;
+
+    // A credit card purchase is bound to the invoice of its cycle and never
+    // touches the account balance — the debit happens once, on payment (RN-08).
+    const assignment = await this.assignToInvoice(companyId, transaction);
+    if ("error" in assignment) {
+      return assignment.error;
+    }
+    const { invoice, invoiceIsNew } = assignment;
+
     const installmentCount = input.installments ?? 1;
 
     if (installmentCount <= 1) {
-      await this.transactionRepository.create(transaction);
+      await this.transactionRepository.runAtomic(async (executor) => {
+        if (invoice && invoiceIsNew) {
+          await this.invoiceRepository.create(invoice, executor);
+        }
+        await this.transactionRepository.create(transaction, executor);
+      });
       this.publish(transaction);
 
       return { statusCode: 201, body: transaction.toJSON() };
@@ -115,6 +138,9 @@ export class TransactionController {
 
     // Parent and installments are written together or not at all.
     await this.transactionRepository.runAtomic(async (executor) => {
+      if (invoice && invoiceIsNew) {
+        await this.invoiceRepository.create(invoice, executor);
+      }
       await this.transactionRepository.create(transaction, executor);
       await this.installmentRepository.createMany(
         installments.value ?? [],
@@ -219,7 +245,9 @@ export class TransactionController {
       }
     }
 
-    const result = transaction.edit(validation.data);
+    const result = transaction.edit(validation.data, {
+      invoiceClosed: await this.isBilled(companyId, transaction),
+    });
     if (result.isFailure) {
       throw this.orGeneric(result.error);
     }
@@ -314,21 +342,50 @@ export class TransactionController {
       return { statusCode: 404, body: { error: "Account not found" } };
     }
 
+    const invoiceClosed = await this.isBilled(companyId, transaction);
+
     const result =
       operation === "confirm"
         ? transaction.confirm()
         : operation === "cancel"
-          ? transaction.cancel(reason)
+          ? transaction.cancel(reason, { invoiceClosed })
           : transaction.refund(reason);
 
     if (result.isFailure) {
       throw this.orGeneric(result.error);
     }
 
+    // Refunding a billed purchase does not move money: it reduces what the
+    // (still unpaid) invoice is asking for.
+    const invoice =
+      operation === "refund" && invoiceClosed && transaction.invoiceId
+        ? await this.invoiceRepository.findById(
+            companyId,
+            transaction.invoiceId,
+          )
+        : null;
+
+    if (invoice) {
+      const adjusted = invoice.adjustForRefund(transaction.netAmount);
+      if (adjusted.isFailure) {
+        throw this.orGeneric(adjusted.error);
+      }
+    }
+
     await this.transactionRepository.runAtomic(async (executor) => {
       await this.transactionRepository.update(transaction, executor);
 
+      if (invoice) {
+        await this.invoiceRepository.update(invoice, executor);
+      }
+
       if (operation === "cancel") {
+        return;
+      }
+
+      // A credit card purchase never touched the balance, so there is nothing
+      // to post or to undo on the account (RN-08).
+      if (!transaction.affectsAccountBalance) {
         return;
       }
 
@@ -351,6 +408,119 @@ export class TransactionController {
     this.publish(transaction);
 
     return { statusCode: 200, body: transaction.toJSON() };
+  }
+
+
+  /**
+   * Validates the card of an expense and, for a credit card, binds the purchase
+   * to the invoice of its cycle — opening that invoice when it does not exist.
+   *
+   * Returns the invoice to persist alongside the transaction, or the error
+   * response when the card cannot take the charge.
+   */
+  private async assignToInvoice(
+    companyId: string,
+    transaction: Transaction,
+  ): Promise<
+    | { invoice?: Invoice; invoiceIsNew: boolean }
+    | { error: ControllerResult }
+  > {
+    const cardId = transaction.cardId;
+    if (!cardId) {
+      return { invoiceIsNew: false };
+    }
+
+    const card = await this.cardRepository.findById(companyId, cardId);
+    if (!card) {
+      return { error: { statusCode: 404, body: { error: "Card not found" } } };
+    }
+
+    if (!card.isActive) {
+      return {
+        error: {
+          statusCode: 400,
+          body: { error: "Inactive cards do not accept new purchases" },
+        },
+      };
+    }
+
+    // A debit card charge behaves like any other expense: no invoice, and the
+    // account balance moves on confirmation.
+    if (!card.isCredit) {
+      return { invoiceIsNew: false };
+    }
+
+    const affordable = await this.ensureCardLimit(companyId, card, transaction);
+    if (affordable) {
+      return { error: affordable };
+    }
+
+    const existing = await this.invoiceRepository.findByCard(companyId, card.id);
+    const assigned = this.invoiceAssignment.assign({
+      companyId,
+      card,
+      purchaseDate: transaction.date,
+      existingInvoices: existing,
+    });
+
+    if (assigned.isFailure || !assigned.value) {
+      throw this.orGeneric(assigned.error);
+    }
+
+    const linked = transaction.linkToInvoice(assigned.value.invoice.id);
+    if (linked.isFailure) {
+      throw this.orGeneric(linked.error);
+    }
+
+    return {
+      invoice: assigned.value.invoice,
+      invoiceIsNew: assigned.value.created,
+    };
+  }
+
+  /**
+   * Rejects a purchase that does not fit in the card's available limit.
+   */
+  private async ensureCardLimit(
+    companyId: string,
+    card: Card,
+    transaction: Transaction,
+  ): Promise<ControllerResult | undefined> {
+    const committed = await this.cardRepository.committedAmount(
+      companyId,
+      card.id,
+    );
+
+    const affordable = card.canAfford(transaction.netAmount, committed);
+    if (affordable.isFailure) {
+      return {
+        statusCode: 400,
+        body: {
+          error:
+            affordable.error?.message ??
+            "The purchase exceeds the card available limit",
+        },
+      };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Whether the invoice a purchase belongs to has already closed, which freezes
+   * the purchase against edits and cancellation.
+   */
+  private async isBilled(
+    companyId: string,
+    transaction: Transaction,
+  ): Promise<boolean> {
+    const invoiceId = transaction.invoiceId;
+    if (!invoiceId) {
+      return false;
+    }
+
+    const invoice = await this.invoiceRepository.findById(companyId, invoiceId);
+    return invoice ? invoice.isBilled : false;
   }
 
   private movementDirection(

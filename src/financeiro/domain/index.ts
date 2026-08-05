@@ -93,3 +93,77 @@ export {
 export type { TransactionFieldChange } from "./transaction-events.js";
 export { Wallet } from "./wallet.js";
 export type { CreateWalletInput } from "./wallet.js";
+export { Card } from "./card.js";
+export type {
+  CardAccount,
+  CardProps,
+  CardType,
+  CreateCardInput,
+  EditCardInput,
+} from "./card.js";
+export {
+  CardCreated,
+  CardDeactivated,
+  CardLimitChanged,
+} from "./card-events.js";
+export { Invoice } from "./invoice.js";
+export type {
+  InvoiceProps,
+  InvoiceStatus,
+  OpenInvoiceInput,
+} from "./invoice.js";
+export {
+  InvoiceClosed,
+  InvoiceOverdue,
+  InvoicePaid,
+} from "./invoice-events.js";
+export {
+  closingDateFor,
+  cycleStartFor,
+  dueDateFor,
+} from "./invoice-cycle.js";
+export { InvoiceAssignmentService } from "./invoice-assignment-service.js";
+export type {
+  AssignPurchaseInput,
+  AssignPurchaseResult,
+} from "./invoice-assignment-service.js";
+export { InvoiceClosingService } from "./invoice-closing-service.js";
+export type {
+  CloseInvoiceInput,
+  CloseInvoiceResult,
+} from "./invoice-closing-service.js";
+export { InvoicePaymentService } from "./invoice-payment-service.js";
+export type {
+  PayInvoiceInput,
+  PayInvoiceResult,
+} from "./invoice-payment-service.js";
+export { Budget } from "./budget.js";
+export type {
+  BudgetCategory,
+  BudgetProgress,
+  BudgetProps,
+  BudgetStatus,
+  CreateBudgetInput,
+  EditBudgetInput,
+} from "./budget.js";
+export {
+  BudgetCreated,
+  BudgetExceeded,
+  BudgetPeriodClosed,
+} from "./budget-events.js";
+export { BudgetService } from "./budget-service.js";
+export { Goal, GoalContribution } from "./goal.js";
+export type {
+  CreateGoalInput,
+  EditGoalInput,
+  GoalAccount,
+  GoalContributionProps,
+  GoalProps,
+  GoalStatus,
+} from "./goal.js";
+export {
+  ContributionMade,
+  GoalAchieved,
+  GoalCreated,
+} from "./goal-events.js";
+export type { BilledGuard } from "./transaction.js";

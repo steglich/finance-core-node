@@ -7,6 +7,11 @@ import type { DomainErrorCode } from "../domain/domain-error.js";
 export interface ControllerResult<T = unknown> {
   statusCode: number;
   body: T;
+  /**
+   * Extra response headers (content type, attachment disposition). The route
+   * still owns the reply — the controller only says what the payload is.
+   */
+  headers?: Readonly<Record<string, string>> | undefined;
 }
 
 /**

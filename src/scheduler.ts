@@ -6,6 +6,9 @@ import { KnexAccountRepository } from "./financeiro/infrastructure/knex-account-
 import { KnexInstallmentRepository } from "./financeiro/infrastructure/knex-installment-repository.js";
 import { KnexRecurrenceRepository } from "./financeiro/infrastructure/knex-recurrence-repository.js";
 import { KnexTransactionRepository } from "./financeiro/infrastructure/knex-transaction-repository.js";
+import { KnexInvoiceRepository } from "./financeiro/infrastructure/knex-invoice-repository.js";
+import { KnexBudgetRepository } from "./financeiro/infrastructure/knex-budget-repository.js";
+import { InvoiceClosingService } from "./financeiro/domain/invoice-closing-service.js";
 import { KnexAuditRepository, KnexDomainEventLogRepository } from "./auditoria/infrastructure/knex-audit-repository.js";
 import { registerAuditHandlers } from "./auditoria/infrastructure/audit-event-handlers.js";
 import { DomainEventBus } from "./shared/domain/domain-event-bus.js";
@@ -16,7 +19,14 @@ import { createLogger } from "./shared/infrastructure/logger.js";
  * Batch job that keeps time-driven state up to date:
  *
  * 1. generates the transactions due for every active recurrence;
- * 2. flags pending installments whose due date has passed.
+ * 2. flags pending installments whose due date has passed;
+ * 3. closes the invoices whose closing date has been reached;
+ * 4. flags overdue invoices;
+ * 5. closes the budget periods that have ended.
+ *
+ * Every pass is idempotent through the aggregates' own state machines: a second
+ * run on the same day finds the state already advanced, fails harmlessly and
+ * publishes nothing.
  *
  * Run it from cron (`node dist/scheduler.js`) — it processes one pass and exits.
  */
@@ -29,6 +39,8 @@ async function run(referenceDate: Date): Promise<void> {
   const transactionRepository = new KnexTransactionRepository(knex);
   const installmentRepository = new KnexInstallmentRepository(knex);
   const accountRepository = new KnexAccountRepository(knex);
+  const invoiceRepository = new KnexInvoiceRepository(knex);
+  const budgetRepository = new KnexBudgetRepository(knex);
   const auditRepository = new KnexAuditRepository(knex);
   const eventLogRepository = new KnexDomainEventLogRepository(knex);
 
@@ -36,6 +48,7 @@ async function run(referenceDate: Date): Promise<void> {
   registerAuditHandlers(eventBus, auditRepository, eventLogRepository, logger);
 
   const recurrenceService = new RecurrenceService();
+  const invoiceClosingService = new InvoiceClosingService();
 
   try {
     let generated = 0;
@@ -143,9 +156,91 @@ async function run(referenceDate: Date): Promise<void> {
       }
     }
 
+    // One database transaction per invoice: a failure on one must not abort the
+    // rest of the batch.
+    let closedInvoices = 0;
+
+    for (const invoice of await invoiceRepository.findDueForClosing(
+      referenceDate,
+    )) {
+      try {
+        const purchases = await invoiceRepository.consolidatePurchases(
+          invoice.companyId,
+          invoice.id,
+        );
+
+        const result = invoiceClosingService.close({ invoice, purchases });
+
+        if (result.isFailure) {
+          continue;
+        }
+
+        await invoiceRepository.update(invoice);
+        for (const event of invoice.events) {
+          eventBus.publish(event);
+        }
+        invoice.clearEvents();
+        closedInvoices += 1;
+      } catch (error) {
+        logger.error(
+          `Failed to close invoice ${invoice.id}: ${String(error)}`,
+        );
+      }
+    }
+
+    let overdueInvoices = 0;
+
+    for (const invoice of await invoiceRepository.findOverdue(referenceDate)) {
+      const result = invoice.markOverdue(referenceDate);
+      if (result.isFailure) {
+        continue;
+      }
+
+      try {
+        await invoiceRepository.update(invoice);
+        for (const event of invoice.events) {
+          eventBus.publish(event);
+        }
+        invoice.clearEvents();
+        overdueInvoices += 1;
+      } catch (error) {
+        logger.error(
+          `Failed to flag invoice ${invoice.id} as overdue: ${String(error)}`,
+        );
+      }
+    }
+
+    let closedBudgets = 0;
+
+    for (const budget of await budgetRepository.findPeriodsToClose(
+      referenceDate,
+    )) {
+      try {
+        const actual = await budgetRepository.actualAmount(budget);
+        const result = budget.closePeriod(actual, referenceDate);
+        if (result.isFailure) {
+          continue;
+        }
+
+        await budgetRepository.update(budget);
+        for (const event of budget.events) {
+          eventBus.publish(event);
+        }
+        budget.clearEvents();
+        closedBudgets += 1;
+      } catch (error) {
+        logger.error(
+          `Failed to close budget period ${budget.id}: ${String(error)}`,
+        );
+      }
+    }
+
     logger.info("Scheduler pass complete", {
       generatedTransactions: generated,
       overdueInstallments: overdue,
+      closedInvoices,
+      overdueInvoices,
+      closedBudgets,
     });
   } finally {
     await database.close();

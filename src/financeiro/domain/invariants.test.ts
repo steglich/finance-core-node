@@ -419,3 +419,72 @@ describe("RN-09 — changes are auditable", () => {
     assert.equal(event?.newDueDate?.toISOString().slice(0, 10), "2024-08-15");
   });
 });
+
+describe("Card purchase invariants (RN-08)", () => {
+  function cardPurchase(invoiceId?: string) {
+    const result = Transaction.create({
+      companyId: "company-1",
+      accountId: "account-1",
+      type: "EXPENSE",
+      grossAmount: 500,
+      currency: "BRL",
+      date: new Date("2026-07-20T00:00:00Z"),
+      cardId: "card-1",
+      invoiceId,
+    });
+
+    assert.ok(result.value);
+    return result.value;
+  }
+
+  it("keeps a billed purchase out of the account balance", () => {
+    const purchase = cardPurchase("invoice-1");
+
+    assert.equal(purchase.cardId, "card-1");
+    assert.equal(purchase.invoiceId, "invoice-1");
+    // The debit happens once, when the invoice is paid.
+    assert.equal(purchase.affectsAccountBalance, false);
+  });
+
+  it("treats a debit card charge like any other expense", () => {
+    const purchase = cardPurchase();
+
+    assert.equal(purchase.cardId, "card-1");
+    assert.equal(purchase.invoiceId, undefined);
+    assert.equal(purchase.affectsAccountBalance, true);
+  });
+
+  it("binds a purchase to exactly one invoice", () => {
+    const purchase = cardPurchase();
+
+    assert.ok(purchase.linkToInvoice("invoice-1").isSuccess);
+    assert.ok(purchase.linkToInvoice("invoice-1").isSuccess);
+
+    const rebind = purchase.linkToInvoice("invoice-2");
+    assert.ok(rebind.isFailure);
+    assert.equal(rebind.error?.code, "INVALID_OPERATION");
+    assert.equal(purchase.invoiceId, "invoice-1");
+  });
+
+  it("freezes a purchase consolidated into a closed invoice", () => {
+    const purchase = cardPurchase("invoice-1");
+
+    const edit = purchase.edit({ grossAmount: 600 }, { invoiceClosed: true });
+    assert.ok(edit.isFailure);
+    assert.equal(edit.error?.code, "INVALID_OPERATION");
+    assert.equal(purchase.grossAmount.amount, 500);
+
+    const cancel = purchase.cancel("engano", { invoiceClosed: true });
+    assert.ok(cancel.isFailure);
+    assert.equal(purchase.status, "PENDING");
+  });
+
+  it("still allows editing a purchase whose invoice is open", () => {
+    const purchase = cardPurchase("invoice-1");
+
+    assert.ok(
+      purchase.edit({ grossAmount: 600 }, { invoiceClosed: false }).isSuccess,
+    );
+    assert.equal(purchase.grossAmount.amount, 600);
+  });
+});

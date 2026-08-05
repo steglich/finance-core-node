@@ -353,9 +353,15 @@ export class Account extends AggregateRoot<string> {
   }
 
   /**
-   * Deactivates the account. Only allowed when no pending transactions remain.
+   * Deactivates the account. Blocked while pending transactions remain, while an
+   * active card is bound to it, or while any of those cards has an unpaid
+   * invoice — the account still owes money in all three cases.
    */
-  deactivate(pendingTransactionCount: number): Result<Account> {
+  deactivate(
+    pendingTransactionCount: number,
+    activeCardCount = 0,
+    unpaidInvoiceCount = 0,
+  ): Result<Account> {
     if (!this._isActive) {
       return Result.failed(
         DomainError.create(
@@ -370,6 +376,24 @@ export class Account extends AggregateRoot<string> {
         DomainError.create(
           "BUSINESS_RULE_VIOLATION",
           `Account has ${pendingTransactionCount} pending transaction(s) and cannot be deactivated`,
+        ),
+      );
+    }
+
+    if (activeCardCount > 0) {
+      return Result.failed(
+        DomainError.create(
+          "BUSINESS_RULE_VIOLATION",
+          `Account has ${activeCardCount} active card(s) and cannot be deactivated`,
+        ),
+      );
+    }
+
+    if (unpaidInvoiceCount > 0) {
+      return Result.failed(
+        DomainError.create(
+          "BUSINESS_RULE_VIOLATION",
+          `Account has ${unpaidInvoiceCount} unpaid invoice(s) and cannot be deactivated`,
         ),
       );
     }

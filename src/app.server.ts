@@ -18,7 +18,17 @@ import { KnexAccountRepository } from "./financeiro/infrastructure/knex-account-
 import { KnexTransactionRepository } from "./financeiro/infrastructure/knex-transaction-repository.js";
 import { KnexInstallmentRepository } from "./financeiro/infrastructure/knex-installment-repository.js";
 import { KnexRecurrenceRepository } from "./financeiro/infrastructure/knex-recurrence-repository.js";
+import { KnexCardRepository } from "./financeiro/infrastructure/knex-card-repository.js";
+import { KnexInvoiceRepository } from "./financeiro/infrastructure/knex-invoice-repository.js";
+import { KnexBudgetRepository } from "./financeiro/infrastructure/knex-budget-repository.js";
+import { KnexGoalRepository } from "./financeiro/infrastructure/knex-goal-repository.js";
+import { KnexReportingRepository } from "./financeiro/infrastructure/knex-reporting-repository.js";
+import { registerBudgetHandlers } from "./financeiro/infrastructure/budget-event-handlers.js";
 import { TransferService } from "./financeiro/domain/transfer-service.js";
+import { BudgetService } from "./financeiro/domain/budget-service.js";
+import { InvoiceAssignmentService } from "./financeiro/domain/invoice-assignment-service.js";
+import { InvoiceClosingService } from "./financeiro/domain/invoice-closing-service.js";
+import { InvoicePaymentService } from "./financeiro/domain/invoice-payment-service.js";
 import { DomainEventBus } from "./shared/domain/domain-event-bus.js";
 import { AccountController } from "./financeiro/api/account-controller.js";
 import { CategoryController } from "./financeiro/api/category-controller.js";
@@ -26,6 +36,12 @@ import { TransactionController } from "./financeiro/api/transaction-controller.j
 import { InstallmentController } from "./financeiro/api/installment-controller.js";
 import { TransferController } from "./financeiro/api/transfer-controller.js";
 import { RecurrenceController } from "./financeiro/api/recurrence-controller.js";
+import { CardController } from "./financeiro/api/card-controller.js";
+import { InvoiceController } from "./financeiro/api/invoice-controller.js";
+import { BudgetController } from "./financeiro/api/budget-controller.js";
+import { GoalController } from "./financeiro/api/goal-controller.js";
+import { DashboardController } from "./financeiro/api/dashboard-controller.js";
+import { ReportController } from "./financeiro/api/report-controller.js";
 import { AuthController } from "./identity/api/auth-controller.js";
 import { CompanyController } from "./identity/api/company-controller.js";
 import { ProfileController } from "./identity/api/profile-controller.js";
@@ -95,6 +111,11 @@ export class AppServer {
     const transactionRepository = new KnexTransactionRepository(knex);
     const installmentRepository = new KnexInstallmentRepository(knex);
     const recurrenceRepository = new KnexRecurrenceRepository(knex);
+    const cardRepository = new KnexCardRepository(knex);
+    const invoiceRepository = new KnexInvoiceRepository(knex);
+    const budgetRepository = new KnexBudgetRepository(knex);
+    const goalRepository = new KnexGoalRepository(knex);
+    const reportingRepository = new KnexReportingRepository(knex);
     const auditRepository = new KnexAuditRepository(knex);
     const eventLogRepository = new KnexDomainEventLogRepository(knex);
     const accessLogRepository = new KnexAccessLogRepository(knex);
@@ -103,6 +124,10 @@ export class AppServer {
     const passwordService = createPasswordService();
     const jwtTokenService = createJwtTokenService();
     const transferService = new TransferService();
+    const budgetService = new BudgetService();
+    const invoiceAssignmentService = new InvoiceAssignmentService();
+    const invoiceClosingService = new InvoiceClosingService();
+    const invoicePaymentService = new InvoicePaymentService();
     const eventBus = new DomainEventBus();
 
     // Every Phase 1 domain event is mirrored into the audit trail (RN-09)
@@ -112,6 +137,17 @@ export class AppServer {
       eventLogRepository,
       this.logger,
     );
+
+    // A transaction that changes a category's confirmed total re-evaluates the
+    // budgets on that category and its ancestors (RN-06 stays intact).
+    registerBudgetHandlers({
+      budgetRepository,
+      categoryRepository,
+      transactionRepository,
+      budgetService,
+      eventBus,
+      logger: this.logger,
+    });
 
     // Controllers
     const authController = new AuthController(
@@ -133,6 +169,8 @@ export class AppServer {
     const accountController = new AccountController(
       accountRepository,
       walletRepository,
+      cardRepository,
+      invoiceRepository,
     );
     const categoryController = new CategoryController(
       categoryRepository,
@@ -143,7 +181,10 @@ export class AppServer {
       accountRepository,
       categoryRepository,
       installmentRepository,
+      cardRepository,
+      invoiceRepository,
       eventBus,
+      invoiceAssignmentService,
     );
     const installmentController = new InstallmentController(
       installmentRepository,
@@ -162,6 +203,35 @@ export class AppServer {
       accountRepository,
       eventBus,
     );
+
+    const cardController = new CardController(
+      cardRepository,
+      accountRepository,
+      invoiceRepository,
+      eventBus,
+    );
+    const invoiceController = new InvoiceController(
+      invoiceRepository,
+      cardRepository,
+      accountRepository,
+      transactionRepository,
+      invoiceClosingService,
+      invoicePaymentService,
+      eventBus,
+    );
+    const budgetController = new BudgetController(
+      budgetRepository,
+      categoryRepository,
+      accountRepository,
+      eventBus,
+    );
+    const goalController = new GoalController(
+      goalRepository,
+      accountRepository,
+      eventBus,
+    );
+    const dashboardController = new DashboardController(reportingRepository);
+    const reportController = new ReportController(reportingRepository);
 
     const auditController = new AuditController(
       auditRepository,
@@ -186,6 +256,12 @@ export class AppServer {
       installmentController,
       transferController,
       recurrenceController,
+      cardController,
+      invoiceController,
+      budgetController,
+      goalController,
+      dashboardController,
+      reportController,
       auditController,
       requireAuditManage: requirePermission("audit", "MANAGE"),
       authenticate: createAuthenticate(jwtTokenService),

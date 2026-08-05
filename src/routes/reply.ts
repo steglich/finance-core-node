@@ -9,5 +9,11 @@ export function sendResult(
   reply: FastifyReply,
   result: ControllerResult,
 ): FastifyReply {
+  if (result.headers) {
+    for (const [name, value] of Object.entries(result.headers)) {
+      reply.header(name, value);
+    }
+  }
+
   return reply.code(result.statusCode).send(result.body);
 }

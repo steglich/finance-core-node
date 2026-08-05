@@ -38,6 +38,32 @@ export const PHASE_1_EVENT_TYPES = [
 ] as const;
 
 /**
+ * Domain events added by Phase 2: cards, invoices, budgets and goals.
+ */
+export const PHASE_2_EVENT_TYPES = [
+  "CardCreated",
+  "CardLimitChanged",
+  "CardDeactivated",
+  "InvoiceClosed",
+  "InvoicePaid",
+  "InvoiceOverdue",
+  "BudgetCreated",
+  "BudgetExceeded",
+  "BudgetPeriodClosed",
+  "GoalCreated",
+  "ContributionMade",
+  "GoalAchieved",
+] as const;
+
+/**
+ * Every event the audit trail mirrors.
+ */
+export const AUDITED_EVENT_TYPES = [
+  ...PHASE_1_EVENT_TYPES,
+  ...PHASE_2_EVENT_TYPES,
+] as const;
+
+/**
  * Maps an event type to the audited entity type and the operation it represents.
  * Events not listed here are logged as domain events but produce no audit entry.
  */
@@ -70,6 +96,18 @@ const AUDITED_EVENTS: Readonly<
   RecurrenceResumed: { entityType: "Recurrence", operation: "STATUS_CHANGE" },
   RecurrenceCancelled: { entityType: "Recurrence", operation: "STATUS_CHANGE" },
   RecurrenceCompleted: { entityType: "Recurrence", operation: "STATUS_CHANGE" },
+  CardCreated: { entityType: "Card", operation: "CREATE" },
+  CardLimitChanged: { entityType: "Card", operation: "UPDATE" },
+  CardDeactivated: { entityType: "Card", operation: "STATUS_CHANGE" },
+  InvoiceClosed: { entityType: "Invoice", operation: "STATUS_CHANGE" },
+  InvoicePaid: { entityType: "Invoice", operation: "STATUS_CHANGE" },
+  InvoiceOverdue: { entityType: "Invoice", operation: "STATUS_CHANGE" },
+  BudgetCreated: { entityType: "Budget", operation: "CREATE" },
+  BudgetExceeded: { entityType: "Budget", operation: "STATUS_CHANGE" },
+  BudgetPeriodClosed: { entityType: "Budget", operation: "STATUS_CHANGE" },
+  GoalCreated: { entityType: "Goal", operation: "CREATE" },
+  ContributionMade: { entityType: "Goal", operation: "UPDATE" },
+  GoalAchieved: { entityType: "Goal", operation: "STATUS_CHANGE" },
 };
 
 /**
@@ -148,7 +186,7 @@ function toAuditEntries(event: DomainEvent<string>): AuditEntry[] {
 }
 
 /**
- * Subscribes the audit handlers to every Phase 1 event.
+ * Subscribes the audit handlers to every audited domain event.
  *
  * The bus is synchronous, so persistence runs detached; a failure to write the
  * trail is logged and never breaks the request that produced the event.
@@ -159,7 +197,7 @@ export function registerAuditHandlers(
   eventLogRepository: DomainEventLogRepository,
   logger: Logger,
 ): void {
-  for (const eventType of PHASE_1_EVENT_TYPES) {
+  for (const eventType of AUDITED_EVENT_TYPES) {
     eventBus.subscribe(eventType, (event: DomainEvent<string>) => {
       const log = new DomainEventLog({
         companyId: companyIdOf(event),

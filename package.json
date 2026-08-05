@@ -11,9 +11,9 @@
     "scheduler:dev": "tsx src/scheduler.ts",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "db:migrate": "knex migrate:latest -c src/knexfile.ts",
-    "db:migrate:rollback": "knex migrate:rollback -c src/knexfile.ts",
-    "db:seed": "knex seed:run -c src/knexfile.ts"
+    "db:migrate": "tsx src/db-cli.ts migrate:latest",
+    "db:migrate:rollback": "tsx src/db-cli.ts migrate:rollback",
+    "db:seed": "tsx src/db-cli.ts seed:run"
   },
   "repository": {
     "type": "git",

@@ -1,5 +1,11 @@
 import type { FastifyPluginAsync, preHandlerHookHandler } from "fastify";
 import type { AccountController } from "../financeiro/api/account-controller.js";
+import type { BudgetController } from "../financeiro/api/budget-controller.js";
+import type { CardController } from "../financeiro/api/card-controller.js";
+import type { DashboardController } from "../financeiro/api/dashboard-controller.js";
+import type { GoalController } from "../financeiro/api/goal-controller.js";
+import type { InvoiceController } from "../financeiro/api/invoice-controller.js";
+import type { ReportController } from "../financeiro/api/report-controller.js";
 import type { CategoryController } from "../financeiro/api/category-controller.js";
 import type { InstallmentController } from "../financeiro/api/installment-controller.js";
 import type { RecurrenceController } from "../financeiro/api/recurrence-controller.js";
@@ -18,6 +24,12 @@ export interface FinanceRoutesDependencies {
   installmentController: InstallmentController;
   transferController: TransferController;
   recurrenceController: RecurrenceController;
+  cardController: CardController;
+  invoiceController: InvoiceController;
+  budgetController: BudgetController;
+  goalController: GoalController;
+  dashboardController: DashboardController;
+  reportController: ReportController;
   authenticate: preHandlerHookHandler;
 }
 
@@ -389,5 +401,324 @@ export function createRecurrenceRoutes(
           ),
       );
     }
+  };
+}
+
+/**
+ * Card routes, mounted under /api/v1/cards. The card's invoices hang off the
+ * card itself, since an invoice only exists inside a card's cycle.
+ */
+export function createCardRoutes(
+  deps: FinanceRoutesDependencies,
+): FastifyPluginAsync {
+  const {
+    cardController: controller,
+    invoiceController: invoices,
+    authenticate,
+  } = deps;
+
+  return async (app) => {
+    app.addHook("preHandler", authenticate);
+
+    app.post("/", async (request, reply) =>
+      sendResult(
+        reply,
+        await controller.create(getCompanyId(request), request.body),
+      ),
+    );
+
+    app.get<{ Querystring: { includeInactive?: string } }>(
+      "/",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.list(
+            getCompanyId(request),
+            request.query.includeInactive === "true",
+          ),
+        ),
+    );
+
+    app.get<{ Params: { cardId: string } }>(
+      "/:cardId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.detail(getCompanyId(request), request.params.cardId),
+        ),
+    );
+
+    app.put<{ Params: { cardId: string } }>(
+      "/:cardId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.edit(
+            getCompanyId(request),
+            request.params.cardId,
+            request.body,
+          ),
+        ),
+    );
+
+    app.delete<{ Params: { cardId: string } }>(
+      "/:cardId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.deactivate(
+            getCompanyId(request),
+            request.params.cardId,
+          ),
+        ),
+    );
+
+    app.get<{ Params: { cardId: string } }>(
+      "/:cardId/invoices",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await invoices.listByCard(
+            getCompanyId(request),
+            request.params.cardId,
+          ),
+        ),
+    );
+
+    app.post<{ Params: { cardId: string } }>(
+      "/:cardId/invoices/close",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await invoices.close(getCompanyId(request), request.params.cardId),
+        ),
+    );
+  };
+}
+
+/**
+ * Invoice routes, mounted under /api/v1/invoices.
+ */
+export function createInvoiceRoutes(
+  deps: FinanceRoutesDependencies,
+): FastifyPluginAsync {
+  const { invoiceController: controller, authenticate } = deps;
+
+  return async (app) => {
+    app.addHook("preHandler", authenticate);
+
+    app.get<{ Params: { invoiceId: string } }>(
+      "/:invoiceId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.detail(
+            getCompanyId(request),
+            request.params.invoiceId,
+          ),
+        ),
+    );
+
+    app.post<{ Params: { invoiceId: string } }>(
+      "/:invoiceId/payments",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.pay(
+            getCompanyId(request),
+            request.params.invoiceId,
+            request.body,
+          ),
+        ),
+    );
+  };
+}
+
+/**
+ * Budget routes, mounted under /api/v1/budgets.
+ */
+export function createBudgetRoutes(
+  deps: FinanceRoutesDependencies,
+): FastifyPluginAsync {
+  const { budgetController: controller, authenticate } = deps;
+
+  return async (app) => {
+    app.addHook("preHandler", authenticate);
+
+    app.post("/", async (request, reply) =>
+      sendResult(
+        reply,
+        await controller.create(getCompanyId(request), request.body),
+      ),
+    );
+
+    app.get("/", async (request, reply) =>
+      sendResult(
+        reply,
+        await controller.list(getCompanyId(request), request.query),
+      ),
+    );
+
+    app.get<{ Params: { budgetId: string } }>(
+      "/:budgetId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.detail(
+            getCompanyId(request),
+            request.params.budgetId,
+          ),
+        ),
+    );
+
+    app.put<{ Params: { budgetId: string } }>(
+      "/:budgetId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.edit(
+            getCompanyId(request),
+            request.params.budgetId,
+            request.body,
+          ),
+        ),
+    );
+
+    app.delete<{ Params: { budgetId: string } }>(
+      "/:budgetId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.deactivate(
+            getCompanyId(request),
+            request.params.budgetId,
+          ),
+        ),
+    );
+  };
+}
+
+/**
+ * Goal routes, mounted under /api/v1/goals.
+ */
+export function createGoalRoutes(
+  deps: FinanceRoutesDependencies,
+): FastifyPluginAsync {
+  const { goalController: controller, authenticate } = deps;
+
+  return async (app) => {
+    app.addHook("preHandler", authenticate);
+
+    app.post("/", async (request, reply) =>
+      sendResult(
+        reply,
+        await controller.create(getCompanyId(request), request.body),
+      ),
+    );
+
+    app.get("/", async (request, reply) =>
+      sendResult(reply, await controller.list(getCompanyId(request))),
+    );
+
+    app.get<{ Params: { goalId: string } }>(
+      "/:goalId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.detail(getCompanyId(request), request.params.goalId),
+        ),
+    );
+
+    app.put<{ Params: { goalId: string } }>(
+      "/:goalId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.edit(
+            getCompanyId(request),
+            request.params.goalId,
+            request.body,
+          ),
+        ),
+    );
+
+    app.post<{ Params: { goalId: string } }>(
+      "/:goalId/contributions",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.contribute(
+            getCompanyId(request),
+            request.params.goalId,
+            request.body,
+          ),
+        ),
+    );
+
+    app.post<{ Params: { goalId: string } }>(
+      "/:goalId/cancel",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.cancel(getCompanyId(request), request.params.goalId),
+        ),
+    );
+  };
+}
+
+/**
+ * Dashboard route, mounted under /api/v1/dashboard.
+ */
+export function createDashboardRoutes(
+  deps: FinanceRoutesDependencies,
+): FastifyPluginAsync {
+  const { dashboardController: controller, authenticate } = deps;
+
+  return async (app) => {
+    app.addHook("preHandler", authenticate);
+
+    app.get("/", async (request, reply) =>
+      sendResult(
+        reply,
+        await controller.overview(getCompanyId(request), request.query),
+      ),
+    );
+  };
+}
+
+/**
+ * Report routes, mounted under /api/v1/reports.
+ */
+export function createReportRoutes(
+  deps: FinanceRoutesDependencies,
+): FastifyPluginAsync {
+  const { reportController: controller, authenticate } = deps;
+
+  return async (app) => {
+    app.addHook("preHandler", authenticate);
+
+    app.get<{ Params: { type: string } }>("/:type", async (request, reply) =>
+      sendResult(
+        reply,
+        await controller.generate(
+          getCompanyId(request),
+          request.params.type,
+          request.query,
+        ),
+      ),
+    );
+
+    app.get<{ Params: { type: string } }>(
+      "/:type/export",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.export(
+            getCompanyId(request),
+            request.params.type,
+            request.query,
+          ),
+        ),
+    );
   };
 }

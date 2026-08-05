@@ -2,6 +2,8 @@ import type { ControllerResult } from "../../shared/api/controller-result.js";
 import { DomainError } from "../../shared/domain/domain-error.js";
 import { Account } from "../domain/account.js";
 import type { AccountRepository } from "../infrastructure/account-repository.js";
+import type { CardRepository } from "../infrastructure/card-repository.js";
+import type { InvoiceRepository } from "../infrastructure/invoice-repository.js";
 import type { WalletRepository } from "../infrastructure/wallet-repository.js";
 import {
   validateCreateAccountRequest,
@@ -15,6 +17,8 @@ export class AccountController {
   constructor(
     private readonly accountRepository: AccountRepository,
     private readonly walletRepository: WalletRepository,
+    private readonly cardRepository: CardRepository,
+    private readonly invoiceRepository: InvoiceRepository,
   ) {}
 
   /**
@@ -85,11 +89,15 @@ export class AccountController {
     }
     account.clearEvents();
 
+    // An account owns its cards, so the detail exposes them.
+    const cards = await this.cardRepository.findByAccount(companyId, accountId);
+
     return {
       statusCode: 200,
       body: {
         ...(account.toJSON() as Record<string, unknown>),
         reconciled: reconciliation.value?.matched ?? true,
+        cards: cards.map((card) => card.toJSON()),
       },
     };
   }
@@ -146,12 +154,13 @@ export class AccountController {
       return { statusCode: 404, body: { error: "Account not found" } };
     }
 
-    const pending = await this.accountRepository.countPendingTransactions(
-      companyId,
-      accountId,
-    );
+    const [pending, activeCards, unpaidInvoices] = await Promise.all([
+      this.accountRepository.countPendingTransactions(companyId, accountId),
+      this.cardRepository.countActiveByAccount(companyId, accountId),
+      this.invoiceRepository.countUnpaidByAccount(companyId, accountId),
+    ]);
 
-    const result = account.deactivate(pending);
+    const result = account.deactivate(pending, activeCards, unpaidInvoices);
     if (result.isFailure) {
       return this.fromDomainError(result.error);
     }

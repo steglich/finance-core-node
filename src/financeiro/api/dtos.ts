@@ -1,5 +1,6 @@
 import { DomainError } from "../../shared/domain/domain-error.js";
 import type { AccountType } from "../domain/account.js";
+import type { CardType } from "../domain/card.js";
 import type { CategoryType } from "../domain/category.js";
 import type { Periodicity } from "../domain/recurrence.js";
 import type {
@@ -290,6 +291,7 @@ export interface CreateTransactionRequest {
   description?: string | undefined;
   tags?: string[] | undefined;
   installments?: number | undefined;
+  cardId?: string | undefined;
   exchangeRate?:
     | { sourceCurrency: string; targetCurrency: string; rate: number; date: Date }
     | undefined;
@@ -352,6 +354,9 @@ export function validateCreateTransactionRequest(
     return invalid("installments must be a positive integer");
   }
 
+  const cardId = optionalString(b, "cardId");
+  if (cardId === null) return invalid("cardId must be a string");
+
   const exchangeRate = parseExchangeRate(b.exchangeRate);
   if (exchangeRate === null) {
     return invalid(
@@ -363,6 +368,7 @@ export function validateCreateTransactionRequest(
     success: true,
     data: {
       accountId,
+      cardId: cardId || undefined,
       categoryId: categoryId || undefined,
       type,
       grossAmount,
@@ -894,5 +900,487 @@ export function validateUpdateRecurrenceRequest(
   return {
     success: true,
     data: { description, amount, categoryId, endDate, maxOccurrences },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Cards                                                                       */
+/* -------------------------------------------------------------------------- */
+
+const CARD_TYPES = ["CREDIT", "DEBIT", "PREPAID"] as const;
+
+/**
+ * Reads an optional integer day-of-month. Returns null when present but invalid.
+ */
+function optionalCycleDay(
+  source: Record<string, unknown>,
+  field: string,
+): number | undefined | null {
+  const value = optionalNumber(source, field);
+  if (value === undefined || value === null) return value;
+  return Number.isInteger(value) && value >= 1 && value <= 31 ? value : null;
+}
+
+export interface CreateCardRequest {
+  accountId: string;
+  name: string;
+  type: CardType;
+  brand: string;
+  bank?: string | undefined;
+  limit?: number | undefined;
+  closingDay?: number | undefined;
+  dueDay?: number | undefined;
+}
+
+export function validateCreateCardRequest(
+  body: unknown,
+): ApiResult<CreateCardRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const accountId = requiredString(b, "accountId");
+  if (!accountId) return invalid("accountId is required");
+
+  const name = requiredString(b, "name");
+  if (!name) return invalid("name is required");
+
+  const type = oneOf(b.type, CARD_TYPES);
+  if (!type) return invalid(`type must be one of ${CARD_TYPES.join(", ")}`);
+
+  const brand = requiredString(b, "brand");
+  if (!brand) return invalid("brand is required");
+
+  const bank = optionalString(b, "bank");
+  if (bank === null) return invalid("bank must be a string");
+
+  const limit = optionalNumber(b, "limit");
+  if (limit === null) return invalid("limit must be a number");
+
+  const closingDay = optionalCycleDay(b, "closingDay");
+  if (closingDay === null) {
+    return invalid("closingDay must be an integer between 1 and 31");
+  }
+
+  const dueDay = optionalCycleDay(b, "dueDay");
+  if (dueDay === null) {
+    return invalid("dueDay must be an integer between 1 and 31");
+  }
+
+  return {
+    success: true,
+    data: {
+      accountId,
+      name,
+      type,
+      brand,
+      bank: bank || undefined,
+      limit,
+      closingDay,
+      dueDay,
+    },
+  };
+}
+
+export interface EditCardRequest {
+  name?: string | undefined;
+  brand?: string | undefined;
+  bank?: string | undefined;
+  limit?: number | undefined;
+  closingDay?: number | undefined;
+  dueDay?: number | undefined;
+}
+
+export function validateEditCardRequest(
+  body: unknown,
+): ApiResult<EditCardRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const name = optionalString(b, "name");
+  if (name === null || name === "") {
+    return invalid("name must be a non-empty string");
+  }
+
+  const brand = optionalString(b, "brand");
+  if (brand === null || brand === "") {
+    return invalid("brand must be a non-empty string");
+  }
+
+  const bank = optionalString(b, "bank");
+  if (bank === null) return invalid("bank must be a string");
+
+  const limit = optionalNumber(b, "limit");
+  if (limit === null) return invalid("limit must be a number");
+
+  const closingDay = optionalCycleDay(b, "closingDay");
+  if (closingDay === null) {
+    return invalid("closingDay must be an integer between 1 and 31");
+  }
+
+  const dueDay = optionalCycleDay(b, "dueDay");
+  if (dueDay === null) {
+    return invalid("dueDay must be an integer between 1 and 31");
+  }
+
+  if (
+    name === undefined &&
+    brand === undefined &&
+    bank === undefined &&
+    limit === undefined &&
+    closingDay === undefined &&
+    dueDay === undefined
+  ) {
+    return invalid("Nothing to update");
+  }
+
+  return {
+    success: true,
+    data: { name, brand, bank, limit, closingDay, dueDay },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Invoices                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface InvoicePaymentRequest {
+  accountId: string;
+  amount: number;
+  date?: Date | undefined;
+  categoryId?: string | undefined;
+  description?: string | undefined;
+}
+
+export function validateInvoicePaymentRequest(
+  body: unknown,
+): ApiResult<InvoicePaymentRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const accountId = requiredString(b, "accountId");
+  if (!accountId) return invalid("accountId is required");
+
+  const amount = optionalNumber(b, "amount");
+  if (amount === null || amount === undefined) {
+    return invalid("amount is required and must be a number");
+  }
+  if (amount <= 0) return invalid("amount must be greater than zero");
+
+  const date = parseDate(b.date);
+  if (date === null) return invalid("date must be an ISO date");
+
+  const categoryId = optionalString(b, "categoryId");
+  if (categoryId === null) return invalid("categoryId must be a string");
+
+  const description = optionalString(b, "description");
+  if (description === null) return invalid("description must be a string");
+
+  return {
+    success: true,
+    data: {
+      accountId,
+      amount,
+      date,
+      categoryId: categoryId || undefined,
+      description: description || undefined,
+    },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Budgets                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface CreateBudgetRequest {
+  categoryId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  plannedAmount: number;
+  currency?: string | undefined;
+}
+
+export function validateCreateBudgetRequest(
+  body: unknown,
+): ApiResult<CreateBudgetRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const categoryId = requiredString(b, "categoryId");
+  if (!categoryId) return invalid("categoryId is required");
+
+  const periodStart = parseDate(b.periodStart);
+  if (periodStart === null || periodStart === undefined) {
+    return invalid("periodStart is required and must be an ISO date");
+  }
+
+  const periodEnd = parseDate(b.periodEnd);
+  if (periodEnd === null || periodEnd === undefined) {
+    return invalid("periodEnd is required and must be an ISO date");
+  }
+
+  if (periodStart.getTime() > periodEnd.getTime()) {
+    return invalid("periodStart must not be later than periodEnd");
+  }
+
+  const plannedAmount = optionalNumber(b, "plannedAmount");
+  if (plannedAmount === null || plannedAmount === undefined) {
+    return invalid("plannedAmount is required and must be a number");
+  }
+  if (plannedAmount <= 0) {
+    return invalid("plannedAmount must be greater than zero");
+  }
+
+  const currency = optionalString(b, "currency");
+  if (currency === null) return invalid("currency must be a string");
+
+  return {
+    success: true,
+    data: {
+      categoryId,
+      periodStart,
+      periodEnd,
+      plannedAmount,
+      currency: currency || undefined,
+    },
+  };
+}
+
+export interface EditBudgetRequest {
+  plannedAmount: number;
+}
+
+export function validateEditBudgetRequest(
+  body: unknown,
+): ApiResult<EditBudgetRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const plannedAmount = optionalNumber(b, "plannedAmount");
+  if (plannedAmount === null || plannedAmount === undefined) {
+    return invalid("plannedAmount is required and must be a number");
+  }
+  if (plannedAmount <= 0) {
+    return invalid("plannedAmount must be greater than zero");
+  }
+
+  return { success: true, data: { plannedAmount } };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Goals                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export interface CreateGoalRequest {
+  accountId: string;
+  name: string;
+  targetAmount: number;
+  deadline: Date;
+}
+
+export function validateCreateGoalRequest(
+  body: unknown,
+): ApiResult<CreateGoalRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const accountId = requiredString(b, "accountId");
+  if (!accountId) return invalid("accountId is required");
+
+  const name = requiredString(b, "name");
+  if (!name) return invalid("name is required");
+
+  const targetAmount = optionalNumber(b, "targetAmount");
+  if (targetAmount === null || targetAmount === undefined) {
+    return invalid("targetAmount is required and must be a number");
+  }
+  if (targetAmount <= 0) {
+    return invalid("targetAmount must be greater than zero");
+  }
+
+  const deadline = parseDate(b.deadline);
+  if (deadline === null || deadline === undefined) {
+    return invalid("deadline is required and must be an ISO date");
+  }
+
+  return { success: true, data: { accountId, name, targetAmount, deadline } };
+}
+
+export interface EditGoalRequest {
+  name?: string | undefined;
+  targetAmount?: number | undefined;
+  deadline?: Date | undefined;
+}
+
+export function validateEditGoalRequest(
+  body: unknown,
+): ApiResult<EditGoalRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const name = optionalString(b, "name");
+  if (name === null || name === "") {
+    return invalid("name must be a non-empty string");
+  }
+
+  const targetAmount = optionalNumber(b, "targetAmount");
+  if (targetAmount === null) return invalid("targetAmount must be a number");
+
+  const deadline = parseDate(b.deadline);
+  if (deadline === null) return invalid("deadline must be an ISO date");
+
+  if (
+    name === undefined &&
+    targetAmount === undefined &&
+    deadline === undefined
+  ) {
+    return invalid("Nothing to update");
+  }
+
+  return { success: true, data: { name, targetAmount, deadline } };
+}
+
+export interface ContributionRequest {
+  amount: number;
+  date?: Date | undefined;
+}
+
+export function validateContributionRequest(
+  body: unknown,
+): ApiResult<ContributionRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const amount = optionalNumber(b, "amount");
+  if (amount === null || amount === undefined) {
+    return invalid("amount is required and must be a number");
+  }
+  if (amount <= 0) return invalid("amount must be greater than zero");
+
+  const date = parseDate(b.date);
+  if (date === null) return invalid("date must be an ISO date");
+
+  return { success: true, data: { amount, date } };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Dashboard and reports                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Reads a list of ids sent either as repeated query params or as a single
+ * comma-separated value. Returns null when present but not a list of strings.
+ */
+function parseIdList(value: unknown): string[] | undefined | null {
+  if (value === undefined || value === null) return undefined;
+
+  if (typeof value === "string") {
+    const ids = value
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    return ids.length > 0 ? ids : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.some((id) => typeof id !== "string")) return null;
+    const ids = (value as string[]).map((id) => id.trim()).filter(Boolean);
+    return ids.length > 0 ? ids : undefined;
+  }
+
+  return null;
+}
+
+/**
+ * First and last day of the month containing `reference`, in UTC.
+ */
+function currentMonth(reference: Date): { start: Date; end: Date } {
+  const year = reference.getUTCFullYear();
+  const month = reference.getUTCMonth();
+
+  return {
+    start: new Date(Date.UTC(year, month, 1)),
+    end: new Date(Date.UTC(year, month + 1, 0)),
+  };
+}
+
+export interface DashboardQuery {
+  start: Date;
+  end: Date;
+  accountIds?: string[] | undefined;
+}
+
+export function validateDashboardQuery(
+  query: unknown,
+  reference: Date = new Date(),
+): ApiResult<DashboardQuery> {
+  const q = asObject(query) ?? {};
+
+  const start = parseDate(q.start);
+  if (start === null) return invalid("start must be an ISO date");
+
+  const end = parseDate(q.end);
+  if (end === null) return invalid("end must be an ISO date");
+
+  const accountIds = parseIdList(q.accountIds ?? q.accountId);
+  if (accountIds === null) {
+    return invalid("accountIds must be a list of strings");
+  }
+
+  // No period supplied means the current month.
+  const period =
+    start === undefined || end === undefined
+      ? currentMonth(reference)
+      : { start, end };
+
+  if (period.start.getTime() > period.end.getTime()) {
+    return invalid("start must not be later than end");
+  }
+
+  return {
+    success: true,
+    data: { start: period.start, end: period.end, accountIds },
+  };
+}
+
+export const REPORT_TYPES = [
+  "cash-flow",
+  "income-statement",
+  "by-category",
+  "by-card",
+  "by-account",
+] as const;
+
+export type ReportType = (typeof REPORT_TYPES)[number];
+
+export interface ReportQuery {
+  type: ReportType;
+  start: Date;
+  end: Date;
+  accountIds?: string[] | undefined;
+}
+
+export function validateReportQuery(
+  type: unknown,
+  query: unknown,
+  reference: Date = new Date(),
+): ApiResult<ReportQuery> {
+  const reportType = oneOf(type, REPORT_TYPES);
+  if (!reportType) {
+    return invalid(`type must be one of ${REPORT_TYPES.join(", ")}`);
+  }
+
+  const period = validateDashboardQuery(query, reference);
+  if (!period.success) {
+    return period;
+  }
+
+  return {
+    success: true,
+    data: {
+      type: reportType,
+      start: period.data.start,
+      end: period.data.end,
+      accountIds: period.data.accountIds,
+    },
   };
 }

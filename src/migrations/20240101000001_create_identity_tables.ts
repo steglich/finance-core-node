@@ -33,6 +33,19 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp("updated_at").defaultTo(knex.fn.now()).notNullable();
   });
 
+  // Profiles table — created before company_users, which references it
+  await knex.schema.createTable("profiles", (table) => {
+    table.uuid("id").primary().defaultTo(knex.raw("gen_random_uuid()"));
+    table.string("name").notNullable();
+    table
+      .uuid("company_id")
+      .references("id")
+      .inTable("companies")
+      .onDelete("CASCADE");
+    table.timestamp("created_at").defaultTo(knex.fn.now()).notNullable();
+    table.timestamp("updated_at").defaultTo(knex.fn.now()).notNullable();
+  });
+
   // Company users (many-to-many)
   await knex.schema.createTable("company_users", (table) => {
     table.uuid("id").primary().defaultTo(knex.raw("gen_random_uuid()"));
@@ -49,19 +62,6 @@ export async function up(knex: Knex): Promise<void> {
       .onDelete("SET NULL");
     table.timestamp("joined_at").defaultTo(knex.fn.now()).notNullable();
     table.unique(["user_id", "company_id"]);
-  });
-
-  // Profiles table
-  await knex.schema.createTable("profiles", (table) => {
-    table.uuid("id").primary().defaultTo(knex.raw("gen_random_uuid()"));
-    table.string("name").notNullable();
-    table
-      .uuid("company_id")
-      .references("id")
-      .inTable("companies")
-      .onDelete("CASCADE");
-    table.timestamp("created_at").defaultTo(knex.fn.now()).notNullable();
-    table.timestamp("updated_at").defaultTo(knex.fn.now()).notNullable();
   });
 
   // Permissions table
@@ -92,8 +92,9 @@ export async function up(knex: Knex): Promise<void> {
 export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTable("profile_permissions");
   await knex.schema.dropTable("permissions");
-  await knex.schema.dropTable("profiles");
+  // company_users references profiles, so it goes first.
   await knex.schema.dropTable("company_users");
+  await knex.schema.dropTable("profiles");
   await knex.schema.dropTable("companies");
   await knex.schema.dropTable("users");
 

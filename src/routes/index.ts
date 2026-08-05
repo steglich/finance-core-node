@@ -7,9 +7,15 @@ import { createCompanyRoutes } from "./company-routes.js";
 import { createProfileRoutes } from "./profile-routes.js";
 import {
   createAccountRoutes,
+  createBudgetRoutes,
+  createCardRoutes,
   createCategoryRoutes,
+  createDashboardRoutes,
+  createGoalRoutes,
   createInstallmentRoutes,
+  createInvoiceRoutes,
   createRecurrenceRoutes,
+  createReportRoutes,
   createTransactionRoutes,
   createTransferRoutes,
   type FinanceRoutesDependencies,
@@ -81,6 +87,12 @@ export async function registerRoutes(
       await api.register(createRecurrenceRoutes(deps), {
         prefix: "/recurrences",
       });
+      await api.register(createCardRoutes(deps), { prefix: "/cards" });
+      await api.register(createInvoiceRoutes(deps), { prefix: "/invoices" });
+      await api.register(createBudgetRoutes(deps), { prefix: "/budgets" });
+      await api.register(createGoalRoutes(deps), { prefix: "/goals" });
+      await api.register(createDashboardRoutes(deps), { prefix: "/dashboard" });
+      await api.register(createReportRoutes(deps), { prefix: "/reports" });
 
       // auditoria
       await api.register(
