@@ -102,7 +102,7 @@ export interface CreateTransactionInput {
   date: Date;
   competence?: Date | undefined;
   description?: string | undefined;
-  tags?: readonly string[];
+  tags?: readonly string[] | undefined;
   parentTransactionId?: string | undefined;
   transferId?: string | undefined;
 }

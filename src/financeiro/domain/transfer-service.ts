@@ -51,15 +51,15 @@ export interface ReverseTransferInput {
 /**
  * Domain service that orchestrates transfers between accounts.
  *
- * RN-04: both legs are built and validated before any balance changes, and they
- * always carry the same `transferId`. If any step fails nothing is mutated, so
- * the pair is created together or not at all — the repository then persists both
- * inside a single database transaction.
+ * RN-04: the two legs are built and validated together and always carry the same
+ * `transferId`; if any check fails, neither exists. The service never touches the
+ * balances itself — the caller applies both movements inside a single database
+ * transaction, which is the strongest atomicity guarantee available.
  */
 export class TransferService {
   /**
-   * Executes a transfer: confirms the debit on the source account and the credit
-   * on the target account.
+   * Builds a transfer: validates both accounts and the source balance, then
+   * returns the confirmed debit and credit legs for the caller to persist.
    */
   transfer(input: TransferInput): Result<TransferResult> {
     const { source, target } = input;
@@ -174,38 +174,15 @@ export class TransferService {
     const debit = debitResult.value as Transaction;
     const credit = creditResult.value as Transaction;
 
-    // From here on both legs exist; apply them to the accounts. Any failure
-    // rolls the first movement back so neither balance ends up changed (RN-04).
+    // Both legs are confirmed together: a failure here leaves neither posted.
     const debitConfirm = debit.confirm();
     if (debitConfirm.isFailure) {
       return Result.failed(debitConfirm.error as DomainError);
     }
 
-    const debitMovement = source.debit({
-      transactionId: debit.id,
-      accountId: source.id,
-      direction: "DEBIT",
-      amount: debitedAmount,
-    });
-    if (debitMovement.isFailure) {
-      return Result.failed(debitMovement.error as DomainError);
-    }
-
     const creditConfirm = credit.confirm();
     if (creditConfirm.isFailure) {
-      this.rollbackDebit(source, debit, debitedAmount);
       return Result.failed(creditConfirm.error as DomainError);
-    }
-
-    const creditMovement = target.credit({
-      transactionId: credit.id,
-      accountId: target.id,
-      direction: "CREDIT",
-      amount: creditedAmount,
-    });
-    if (creditMovement.isFailure) {
-      this.rollbackDebit(source, debit, debitedAmount);
-      return Result.failed(creditMovement.error as DomainError);
     }
 
     const completed = new TransferCompleted(
@@ -233,7 +210,7 @@ export class TransferService {
    * Reverses a completed transfer: refunds both legs and undoes both movements.
    */
   reverse(input: ReverseTransferInput): Result<TransferResult> {
-    const { debit, credit, source, target } = input;
+    const { debit, credit, source } = input;
 
     if (
       debit.transferId !== input.transferId ||
@@ -255,26 +232,6 @@ export class TransferService {
     const creditRefund = credit.refund(input.reason);
     if (creditRefund.isFailure) {
       return Result.failed(creditRefund.error as DomainError);
-    }
-
-    const restoreSource = source.credit({
-      transactionId: debit.id,
-      accountId: source.id,
-      direction: "CREDIT",
-      amount: debit.netAmount,
-    });
-    if (restoreSource.isFailure) {
-      return Result.failed(restoreSource.error as DomainError);
-    }
-
-    const restoreTarget = target.debit({
-      transactionId: credit.id,
-      accountId: target.id,
-      direction: "DEBIT",
-      amount: credit.netAmount,
-    });
-    if (restoreTarget.isFailure) {
-      return Result.failed(restoreTarget.error as DomainError);
     }
 
     const reversed = new TransferReversed(
@@ -338,21 +295,4 @@ export class TransferService {
     );
   }
 
-  /**
-   * Undoes the debit leg when the credit leg cannot be applied, keeping the
-   * transfer all-or-nothing in memory before anything is persisted.
-   */
-  private rollbackDebit(
-    source: Account,
-    debit: Transaction,
-    amount: Money,
-  ): void {
-    source.credit({
-      transactionId: debit.id,
-      accountId: source.id,
-      direction: "CREDIT",
-      amount,
-    });
-    debit.refund("Transfer rolled back: credit leg failed");
-  }
 }

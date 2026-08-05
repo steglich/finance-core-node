@@ -5,14 +5,30 @@ import type { ProfileController } from "../identity/api/profile-controller.js";
 import { createAuthRoutes } from "./auth-routes.js";
 import { createCompanyRoutes } from "./company-routes.js";
 import { createProfileRoutes } from "./profile-routes.js";
+import {
+  createAccountRoutes,
+  createCategoryRoutes,
+  createInstallmentRoutes,
+  createRecurrenceRoutes,
+  createTransactionRoutes,
+  createTransferRoutes,
+  type FinanceRoutesDependencies,
+} from "./finance-routes.js";
+import { createAuditRoutes } from "./audit-routes.js";
+import type { AuditController } from "../auditoria/api/audit-controller.js";
 
 export const API_PREFIX = "/api/v1";
 
 /**
  * Everything the route tree needs, built by the composition root.
  */
-export interface RouteDependencies {
+export interface RouteDependencies extends Omit<
+  FinanceRoutesDependencies,
+  "authenticate"
+> {
   authController: AuthController;
+  auditController: AuditController;
+  requireAuditManage: preHandlerHookHandler;
   companyController: CompanyController;
   profileController: ProfileController;
   authenticate: preHandlerHookHandler;
@@ -50,6 +66,30 @@ export async function registerRoutes(
           authenticate: deps.authenticate,
         }),
         { prefix: "/profiles" },
+      );
+
+      // financeiro
+      await api.register(createAccountRoutes(deps), { prefix: "/accounts" });
+      await api.register(createCategoryRoutes(deps), { prefix: "/categories" });
+      await api.register(createTransactionRoutes(deps), {
+        prefix: "/transactions",
+      });
+      await api.register(createInstallmentRoutes(deps), {
+        prefix: "/installments",
+      });
+      await api.register(createTransferRoutes(deps), { prefix: "/transfers" });
+      await api.register(createRecurrenceRoutes(deps), {
+        prefix: "/recurrences",
+      });
+
+      // auditoria
+      await api.register(
+        createAuditRoutes({
+          controller: deps.auditController,
+          authenticate: deps.authenticate,
+          requireAuditManage: deps.requireAuditManage,
+        }),
+        { prefix: "/audit" },
       );
     },
     { prefix: API_PREFIX },

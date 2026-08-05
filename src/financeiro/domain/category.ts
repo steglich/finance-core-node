@@ -71,8 +71,8 @@ export interface CreateCategoryInput {
  * Editable category fields (see spec: Edit Category).
  */
 export interface EditCategoryInput {
-  name?: string;
-  type?: CategoryType;
+  name?: string | undefined;
+  type?: CategoryType | undefined;
   color?: string | undefined;
   icon?: string | undefined;
 }

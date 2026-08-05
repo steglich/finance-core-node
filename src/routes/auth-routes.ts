@@ -14,7 +14,7 @@ export function createAuthRoutes(
     );
 
     app.post("/login", async (request, reply) =>
-      sendResult(reply, await controller.login(request.body)),
+      sendResult(reply, await controller.login(request.body, request.ip)),
     );
 
     app.post("/refresh", async (request, reply) =>

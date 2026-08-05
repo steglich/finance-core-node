@@ -66,7 +66,7 @@ export interface CreateAccountInput {
   number: string;
   type: AccountType;
   currency: string;
-  initialBalance?: number;
+  initialBalance?: number | undefined;
 }
 
 const ACCOUNT_TYPES: ReadonlySet<string> = new Set<AccountType>([

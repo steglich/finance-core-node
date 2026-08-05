@@ -77,7 +77,7 @@ export interface CreateRecurrenceInput {
   description: string;
   amount: number;
   currency: string;
-  type?: TransactionType;
+  type?: TransactionType | undefined;
   periodicity: Periodicity;
   startDate: Date;
   endDate?: Date | undefined;

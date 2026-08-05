@@ -20,6 +20,12 @@ export interface CompanyRepository {
   findUserCompanies(userId: string): Promise<string[]>;
 
   /**
+   * Profile assigned to a user within a company, or null when the user does not
+   * belong to it. Used by `requirePermission` to resolve the active profile.
+   */
+  findUserProfileId(companyId: string, userId: string): Promise<string | null>;
+
+  /**
    * Adds a user to a company.
    */
   addUser(companyId: string, userId: string, profileId?: string): Promise<void>;

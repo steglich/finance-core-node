@@ -114,79 +114,81 @@
 
 ## 12. Financeiro — Infraestrutura
 
-- [ ] 12.1 Implementar `WalletRepository`
-- [ ] 12.2 Implementar `AccountRepository` com atualização atômica de saldo
-- [ ] 12.3 Implementar `CategoryRepository` com queries hierárquicas
-- [ ] 12.4 Implementar `TransactionRepository` com suporte a transações atômicas (para transferências)
-- [ ] 12.5 Implementar `InstallmentRepository`
-- [ ] 12.6 Implementar `RecurrenceRepository`
+- [x] 12.1 Implementar `WalletRepository`
+- [x] 12.2 Implementar `AccountRepository` com atualização atômica de saldo
+- [x] 12.3 Implementar `CategoryRepository` com queries hierárquicas
+- [x] 12.4 Implementar `TransactionRepository` com suporte a transações atômicas (para transferências)
+- [x] 12.5 Implementar `InstallmentRepository`
+- [x] 12.6 Implementar `RecurrenceRepository`
 
 ## 13. Financeiro — API
 
-- [ ] 13.1 Criar `POST /api/v1/accounts` — criar conta
-- [ ] 13.2 Criar `GET /api/v1/accounts` — listar contas
-- [ ] 13.3 Criar `GET /api/v1/accounts/:id` — detalhe da conta com saldo
-- [ ] 13.4 Criar `PUT /api/v1/accounts/:id` — editar conta
-- [ ] 13.5 Criar `POST /api/v1/accounts/:id/deactivate` — inativar conta
-- [ ] 13.6 Criar `POST /api/v1/categories` — criar categoria
-- [ ] 13.7 Criar `GET /api/v1/categories` — listar categorias (hierárquico)
-- [ ] 13.8 Criar `PUT /api/v1/categories/:id` — editar categoria
-- [ ] 13.9 Criar `DELETE /api/v1/categories/:id` — excluir categoria
-- [ ] 13.10 Criar `POST /api/v1/categories/:id/move` — mover categoria na hierarquia
-- [ ] 13.11 Criar `POST /api/v1/transactions` — registrar transação (simples e parcelada)
-- [ ] 13.12 Criar `GET /api/v1/transactions` — listar transações com filtros (data, categoria, conta, tipo, status)
-- [ ] 13.13 Criar `GET /api/v1/transactions/:id` — detalhe da transação
-- [ ] 13.14 Criar `PUT /api/v1/transactions/:id` — editar transação pendente
-- [ ] 13.15 Criar `POST /api/v1/transactions/:id/confirm` — confirmar transação
-- [ ] 13.16 Criar `POST /api/v1/transactions/:id/cancel` — cancelar transação
-- [ ] 13.17 Criar `POST /api/v1/transactions/:id/refund` — estornar transação
-- [ ] 13.18 Criar `POST /api/v1/transactions/:id/attachments` — anexar arquivo
-- [ ] 13.19 Criar `GET /api/v1/transactions/:id/attachments/:attachmentId` — baixar anexo
-- [ ] 13.20 Criar `GET /api/v1/installments` — listar parcelas com filtros
-- [ ] 13.21 Criar `PUT /api/v1/installments/:id/due-date` — alterar vencimento
-- [ ] 13.22 Criar `POST /api/v1/installments/:id/pay` — pagar parcela individual
-- [ ] 13.23 Criar `POST /api/v1/installments/pay` — pagamento em lote
-- [ ] 13.24 Criar `POST /api/v1/transfers` — realizar transferência
-- [ ] 13.25 Criar `POST /api/v1/recurrences` — criar recorrência
-- [ ] 13.26 Criar `GET /api/v1/recurrences` — listar recorrências
-- [ ] 13.27 Criar `PUT /api/v1/recurrences/:id` — editar recorrência
-- [ ] 13.28 Criar `POST /api/v1/recurrences/:id/pause` — pausar recorrência
-- [ ] 13.29 Criar `POST /api/v1/recurrences/:id/resume` — retomar recorrência
-- [ ] 13.30 Criar `POST /api/v1/recurrences/:id/cancel` — cancelar recorrência
+- [x] 13.1 Criar `POST /api/v1/accounts` — criar conta
+- [x] 13.2 Criar `GET /api/v1/accounts` — listar contas
+- [x] 13.3 Criar `GET /api/v1/accounts/:id` — detalhe da conta com saldo
+- [x] 13.4 Criar `PUT /api/v1/accounts/:id` — editar conta
+- [x] 13.5 Criar `POST /api/v1/accounts/:id/deactivate` — inativar conta
+- [x] 13.6 Criar `POST /api/v1/categories` — criar categoria
+- [x] 13.7 Criar `GET /api/v1/categories` — listar categorias (hierárquico)
+- [x] 13.8 Criar `PUT /api/v1/categories/:id` — editar categoria
+- [x] 13.9 Criar `DELETE /api/v1/categories/:id` — excluir categoria
+- [x] 13.10 Criar `POST /api/v1/categories/:id/move` — mover categoria na hierarquia
+- [x] 13.11 Criar `POST /api/v1/transactions` — registrar transação (simples e parcelada)
+- [x] 13.12 Criar `GET /api/v1/transactions` — listar transações com filtros (data, categoria, conta, tipo, status)
+- [x] 13.13 Criar `GET /api/v1/transactions/:id` — detalhe da transação
+- [x] 13.14 Criar `PUT /api/v1/transactions/:id` — editar transação pendente
+- [x] 13.15 Criar `POST /api/v1/transactions/:id/confirm` — confirmar transação
+- [x] 13.16 Criar `POST /api/v1/transactions/:id/cancel` — cancelar transação
+- [x] 13.17 Criar `POST /api/v1/transactions/:id/refund` — estornar transação
+- [x] 13.18 Criar `POST /api/v1/transactions/:id/attachments` — anexar arquivo
+- [x] 13.19 Criar `GET /api/v1/transactions/:id/attachments/:attachmentId` — baixar anexo
+- [x] 13.20 Criar `GET /api/v1/installments` — listar parcelas com filtros
+- [x] 13.21 Criar `PUT /api/v1/installments/:id/due-date` — alterar vencimento
+- [x] 13.22 Criar `POST /api/v1/installments/:id/pay` — pagar parcela individual
+- [x] 13.23 Criar `POST /api/v1/installments/pay` — pagamento em lote
+- [x] 13.24 Criar `POST /api/v1/transfers` — realizar transferência
+- [x] 13.25 Criar `POST /api/v1/recurrences` — criar recorrência
+- [x] 13.26 Criar `GET /api/v1/recurrences` — listar recorrências
+- [x] 13.27 Criar `PUT /api/v1/recurrences/:id` — editar recorrência
+- [x] 13.28 Criar `POST /api/v1/recurrences/:id/pause` — pausar recorrência
+- [x] 13.29 Criar `POST /api/v1/recurrences/:id/resume` — retomar recorrência
+- [x] 13.30 Criar `POST /api/v1/recurrences/:id/cancel` — cancelar recorrência
 
 ## 14. Auditoria — Domínio
 
-- [ ] 14.1 Implementar entidade `AuditEntry` — entityType, entityId, operation, field, oldValue, newValue, userId, timestamp
-- [ ] 14.2 Implementar entidade `DomainEventLog` — eventType, entityId, payload, userId, timestamp
-- [ ] 14.3 Implementar entidade `AccessLog` — eventType (LOGIN_SUCCESS, LOGIN_FAILED, LOGOUT, PASSWORD_CHANGE), userId?, email, ipAddress, timestamp
+- [x] 14.1 Implementar entidade `AuditEntry` — entityType, entityId, operation, field, oldValue, newValue, userId, timestamp
+- [x] 14.2 Implementar entidade `DomainEventLog` — eventType, entityId, payload, userId, timestamp
+- [x] 14.3 Implementar entidade `AccessLog` — eventType (LOGIN_SUCCESS, LOGIN_FAILED, LOGOUT, PASSWORD_CHANGE), userId?, email, ipAddress, timestamp
 
 ## 15. Auditoria — Infraestrutura
 
-- [ ] 15.1 Implementar `AuditRepository` com método `append()` append-only
-- [ ] 15.2 Implementar `DomainEventLogRepository` com método `persist()` append-only
-- [ ] 15.3 Implementar `AccessLogRepository`
-- [ ] 15.4 Implementar handlers de eventos de domínio que persistem em `AuditEntry` e `DomainEventLog`
-- [ ] 15.5 Registrar handlers no `DomainEventBus` para todos os eventos da Fase 1
+- [x] 15.1 Implementar `AuditRepository` com método `append()` append-only
+- [x] 15.2 Implementar `DomainEventLogRepository` com método `persist()` append-only
+- [x] 15.3 Implementar `AccessLogRepository`
+- [x] 15.4 Implementar handlers de eventos de domínio que persistem em `AuditEntry` e `DomainEventLog`
+- [x] 15.5 Registrar handlers no `DomainEventBus` para todos os eventos da Fase 1
 
 ## 16. Auditoria — API
 
-- [ ] 16.1 Criar `GET /api/v1/audit/entities/:entityType/:entityId` — histórico de alterações de uma entidade
-- [ ] 16.2 Criar `GET /api/v1/audit/events` — listar eventos de domínio com filtros
-- [ ] 16.3 Criar `GET /api/v1/audit/access-logs` — listar logs de acesso (admin apenas)
+- [x] 16.1 Criar `GET /api/v1/audit/entities/:entityType/:entityId` — histórico de alterações de uma entidade
+- [x] 16.2 Criar `GET /api/v1/audit/events` — listar eventos de domínio com filtros
+- [x] 16.3 Criar `GET /api/v1/audit/access-logs` — listar logs de acesso (admin apenas)
 
 ## 17. Integração e Wiring
 
-- [ ] 17.1 Configurar `AppServer` para registrar todas as rotas dos 3 bounded contexts
-- [ ] 17.2 Configurar injeção de dependências (repositórios → serviços → controllers)
-- [ ] 17.3 Implementar tratamento global de erros (domain errors → HTTP 4xx, unexpected → HTTP 500)
-- [ ] 17.4 Implementar logging estruturado de requests/responses
-- [ ] 17.5 Implementar validação de schemas de entrada (Zod) para todos os endpoints
-- [ ] 17.6 Criar script scheduler para processamento de recorrências e verificação de parcelas vencidas
+- [x] 17.1 Configurar `AppServer` para registrar todas as rotas dos 3 bounded contexts
+- [x] 17.2 Configurar injeção de dependências (repositórios → serviços → controllers)
+- [x] 17.3 Implementar tratamento global de erros (domain errors → HTTP 4xx, unexpected → HTTP 500)
+- [x] 17.4 Implementar logging estruturado de requests/responses
+- [x] 17.5 Implementar validação de schemas de entrada para todos os endpoints — feita à mão em `api/dtos.ts` (o AGENTS.md proíbe adicionar Zod)
+- [x] 17.6 Criar script scheduler para processamento de recorrências e verificação de parcelas vencidas
 
 ## 18. Testes
 
-- [ ] 18.1 Testes unitários dos value objects: `Money`, `Email`, `Password`, `ExchangeRate`, `Period`, `Percent`
-- [ ] 18.2 Testes unitários das máquinas de estado: `Transaction` e `Installment`
-- [ ] 18.3 Testes unitários dos serviços de domínio: `TransferService`, `ParcelamentoService`, `RecorrenciaService`
-- [ ] 18.4 Testes unitários das invariantes de negócio (RN-01 a RN-09)
-- [ ] 18.5 Testes de integração da API (happy path + error cases para cada endpoint)
+> Runner: `node:test` nativo + `tsx` (`npm test`), escolhido para não adicionar dependências.
+
+- [x] 18.1 Testes unitários dos value objects: `Money`, `Email`, `Password`, `ExchangeRate`, `Period`, `Percent`
+- [x] 18.2 Testes unitários das máquinas de estado: `Transaction` e `Installment`
+- [x] 18.3 Testes unitários dos serviços de domínio: `TransferService`, `ParcelamentoService`, `RecorrenciaService`
+- [x] 18.4 Testes unitários das invariantes de negócio (RN-01 a RN-09)
+- [x] 18.5 Testes de integração da API (happy path + error cases para cada endpoint)

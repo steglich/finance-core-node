@@ -37,6 +37,19 @@ export class KnexCompanyRepository implements CompanyRepository {
     return rows.map((row) => row.company_id as string);
   }
 
+  async findUserProfileId(
+    companyId: string,
+    userId: string,
+  ): Promise<string | null> {
+    const row = await this.knex("company_users")
+      .where({ company_id: companyId, user_id: userId })
+      .first();
+
+    return ((row as Record<string, unknown> | undefined)?.profile_id as
+      | string
+      | null) ?? null;
+  }
+
   async addUser(
     companyId: string,
     userId: string,

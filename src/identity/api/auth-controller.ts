@@ -5,6 +5,11 @@ import type { ProfileRepository } from "../infrastructure/profile-repository.js"
 import type { PasswordService } from "../domain/password-service.js";
 import type { JwtTokenService } from "../infrastructure/jwt-token-service.js";
 import type { CategoryRepository } from "../../financeiro/infrastructure/category-repository.js";
+import {
+  AccessLog,
+  type AccessEventType,
+} from "../../auditoria/domain/access-log.js";
+import type { AccessLogRepository } from "../../auditoria/infrastructure/audit-repository.js";
 import type { DatabaseConnection } from "../../shared/infrastructure/database-connection.js";
 import { UserService, CompanyService } from "../domain/user-service.js";
 import {
@@ -30,7 +35,26 @@ export class AuthController {
     private readonly jwtTokenService: JwtTokenService,
     private readonly categoryRepository: CategoryRepository,
     private readonly databaseConnection: DatabaseConnection,
+    private readonly accessLogRepository?: AccessLogRepository,
   ) {}
+
+  /**
+   * Records an authentication event. Writing the trail must never break the
+   * request, so failures are swallowed after being surfaced by the repository.
+   */
+  private logAccess(
+    eventType: AccessEventType,
+    email: string,
+    userId?: string,
+    ipAddress?: string,
+  ): void {
+    if (!this.accessLogRepository) {
+      return;
+    }
+
+    const log = new AccessLog({ eventType, email, userId, ipAddress });
+    void this.accessLogRepository.append(log).catch(() => undefined);
+  }
 
   /**
    * Handles POST /api/v1/auth/register.
@@ -88,7 +112,7 @@ export class AuthController {
   /**
    * Handles POST /api/v1/auth/login.
    */
-  async login(body: unknown): Promise<ControllerResult> {
+  async login(body: unknown, ipAddress?: string): Promise<ControllerResult> {
     const validation = validateLoginRequest(body);
     if (!validation.success) {
       return { statusCode: 400, body: { error: validation.error.message } };
@@ -101,9 +125,23 @@ export class AuthController {
       this.passwordService,
     );
 
-    const result = await userService.authenticate(
+    let result;
+    try {
+      result = await userService.authenticate(
+        validation.data.email,
+        validation.data.password,
+      );
+    } catch (error) {
+      // Failed attempts are part of the access trail, not just an error path
+      this.logAccess("LOGIN_FAILED", validation.data.email, undefined, ipAddress);
+      throw error;
+    }
+
+    this.logAccess(
+      "LOGIN_SUCCESS",
       validation.data.email,
-      validation.data.password,
+      result.user.id,
+      ipAddress,
     );
 
     const companyIds = await this.companyRepository.findUserCompanies(

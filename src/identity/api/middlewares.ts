@@ -1,6 +1,12 @@
 import type { FastifyRequest, preHandlerHookHandler } from "fastify";
 import { DomainError } from "../../shared/domain/domain-error.js";
 import type { JwtTokenService } from "../infrastructure/jwt-token-service.js";
+import type { CompanyRepository } from "../infrastructure/company-repository.js";
+import type { ProfileRepository } from "../infrastructure/profile-repository.js";
+import type {
+  PermissionAction,
+  PermissionResource,
+} from "../domain/profile.js";
 
 /**
  * Request context with authenticated user info.
@@ -40,6 +46,63 @@ export function createAuthenticate(
     request.authContext = {
       userId: decoded.userId,
       companyId: decoded.companyId,
+    };
+  };
+}
+
+/**
+ * Repositories needed to resolve the permissions of the active profile.
+ */
+export interface PermissionDependencies {
+  companyRepository: CompanyRepository;
+  profileRepository: ProfileRepository;
+}
+
+/**
+ * Creates a `requirePermission(resource, action)` factory bound to the given
+ * repositories. Register the returned hook after `authenticate`: it resolves
+ * the profile the user holds in the company carried by the token and rejects
+ * the request when that profile lacks the permission.
+ */
+export function createRequirePermission(deps: PermissionDependencies) {
+  return (
+    resource: PermissionResource,
+    action: PermissionAction,
+  ): preHandlerHookHandler => {
+    return async (request) => {
+      const { userId, companyId } = getAuthContext(request);
+
+      const profileId = await deps.companyRepository.findUserProfileId(
+        companyId,
+        userId,
+      );
+      if (!profileId) {
+        throw DomainError.create(
+          "UNAUTHORIZED_ACCESS",
+          "User has no profile in the active company",
+        );
+      }
+
+      const profile = await deps.profileRepository.findById(profileId);
+      if (!profile) {
+        throw DomainError.create(
+          "UNAUTHORIZED_ACCESS",
+          "Active profile not found",
+        );
+      }
+
+      const allowed = profile.permissions.some(
+        (permission) =>
+          permission.resource === resource &&
+          (permission.action === action || permission.action === "MANAGE"),
+      );
+
+      if (!allowed) {
+        throw DomainError.create(
+          "UNAUTHORIZED_ACCESS",
+          `Profile lacks permission ${action} on ${resource}`,
+        );
+      }
     };
   };
 }
