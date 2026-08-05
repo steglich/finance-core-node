@@ -1,0 +1,98 @@
+# Transacoes Specification
+
+## Purpose
+
+Core financial transaction recording with support for expenses, income, adjustments, and installment purchases, following a strict state machine and domain invariants.
+
+## Requirements
+
+### Requirement: Register Expense Transaction
+The system SHALL allow users to register expense transactions with at minimum: amount, account, category, and date. Optional fields include: description, discount, tags, attachments, cost center, and competence date. The system SHALL calculate the net amount as: gross amount - discount + interest + penalty.
+
+#### Scenario: Simple expense
+- **WHEN** a user registers an expense of R$ 150,00 in account "Conta Corrente", category "Alimentação > Mercado", on today's date
+- **THEN** the system creates a transaction with status "Pending", gross amount R$ 150,00, and net amount R$ 150,00
+
+#### Scenario: Expense with discount
+- **WHEN** a user registers an expense of R$ 200,00 with a R$ 20,00 discount
+- **THEN** the system creates a transaction with gross amount R$ 200,00, discount R$ 20,00, and net amount R$ 180,00
+
+### Requirement: Register Income Transaction
+The system SHALL allow users to register income transactions following the same structure as expenses, with the amount representing money received.
+
+#### Scenario: Income transaction
+- **WHEN** a user registers an income of R$ 5.000,00 in account "Conta Corrente", category "Salário", on today's date
+- **THEN** the system creates an income transaction with status "Pending"
+
+### Requirement: Transaction State Machine
+The system SHALL enforce a transaction lifecycle with the following states and transitions: Pending → Confirmed, Pending → Cancelled, Confirmed → Refunded. Transitions to Cancelled or Refunded from any other state MUST be rejected. The system SHALL publish domain events for each state change.
+
+#### Scenario: Confirm a pending transaction
+- **WHEN** a user confirms a pending transaction
+- **THEN** the system transitions it to "Confirmed", updates the account balance, and publishes TransactionPosted
+
+#### Scenario: Cancel a pending transaction
+- **WHEN** a user cancels a pending transaction
+- **THEN** the system transitions it to "Cancelled" and publishes TransactionCancelled
+
+#### Scenario: Refund a confirmed transaction
+- **WHEN** a user refunds a confirmed transaction
+- **THEN** the system transitions it to "Refunded", reverts the balance impact, and publishes TransactionRefunded
+
+#### Scenario: Cannot cancel a confirmed transaction
+- **WHEN** a user attempts to cancel a confirmed transaction
+- **THEN** the system rejects the operation and offers "Refund" as the available action
+
+#### Scenario: Cannot modify a cancelled transaction
+- **WHEN** a user attempts to edit or change the state of a cancelled transaction
+- **THEN** the system rejects the operation
+
+### Requirement: Transaction Linked to Account
+Every transaction MUST belong to at least one account. The system SHALL reject any transaction without an account.
+
+#### Scenario: Transaction without account
+- **WHEN** a user attempts to register a transaction without specifying an account
+- **THEN** the system rejects the transaction with a validation error
+
+### Requirement: Edit Pending Transaction
+The system SHALL allow editing of pending transactions only. Editable fields include: amount, category, date, description, discount, tags, and attachments. The system SHALL register audit entries for every edit.
+
+#### Scenario: Edit pending transaction amount
+- **WHEN** a user changes the amount of a pending transaction from R$ 100,00 to R$ 120,00
+- **THEN** the system updates the amount and records an audit entry
+
+#### Scenario: Cannot edit confirmed transaction
+- **WHEN** a user attempts to edit a confirmed transaction
+- **THEN** the system rejects the edit
+
+### Requirement: Transaction with Tags
+The system SHALL allow users to attach multiple tags to a transaction for flexible classification beyond categories.
+
+#### Scenario: Add tags to transaction
+- **WHEN** a user tags a transaction with "urgente" and "reembolsável"
+- **THEN** the system stores and displays the tags
+
+### Requirement: Transaction with Attachments
+The system SHALL allow users to attach files to transactions. The system SHALL store attachment metadata (filename, size, MIME type) and the file content.
+
+#### Scenario: Attach receipt to transaction
+- **WHEN** a user attaches a PDF receipt to a transaction
+- **THEN** the system stores the file and links it to the transaction
+
+### Requirement: No Physical Deletion
+The system MUST NOT physically delete any transaction. The system SHALL use status changes (Cancelled, Refunded) or soft-delete to preserve the audit trail.
+
+#### Scenario: "Delete" a transaction
+- **WHEN** a user requests to delete a transaction
+- **THEN** the system marks it as "Cancelled" (if pending) or prompts for "Refund", preserving the original record
+
+### Requirement: Register Parceled Purchase
+The system SHALL allow users to register a purchase as parceled (installments). When registering a parceled purchase, the system SHALL automatically generate N installments with consecutive monthly due dates starting from the next month. Each installment SHALL inherit the category and cost center from the parent transaction.
+
+#### Scenario: Register a 12-installment purchase
+- **WHEN** a user registers a purchase of R$ 1.200,00 in 12 installments on a credit card account
+- **THEN** the system creates the parent transaction and 12 installments of R$ 100,00 each, with consecutive monthly due dates
+
+#### Scenario: Installments inherit category
+- **WHEN** a parceled purchase is registered with category "Eletrônicos"
+- **THEN** all generated installments have category "Eletrônicos"
