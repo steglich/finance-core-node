@@ -78,39 +78,39 @@
 
 ## 8. Financeiro — Domínio (Transações)
 
-- [ ] 8.1 Implementar entidade `Transaction` como Aggregate Root — com campos: type, status, grossAmount, discount, interest, penalty, netAmount, currency, exchangeRate, date, competence, description
-- [ ] 8.2 Implementar `Transaction.confirm()` — transição Pendente → Confirmada, publica `TransactionPosted`
-- [ ] 8.3 Implementar `Transaction.cancel()` — transição Pendente → Cancelada, publica `TransactionCancelled`
-- [ ] 8.4 Implementar `Transaction.refund()` — transição Confirmada → Estornada, publica `TransactionRefunded`
-- [ ] 8.5 Implementar validação da máquina de estados (transições proibidas lançam `DomainError`)
-- [ ] 8.6 Implementar cálculo de valor líquido: `netAmount = grossAmount - discount + interest + penalty`
-- [ ] 8.7 Implementar `Transaction.edit()` — apenas campos permitidos, apenas se Pendente, registra auditoria
+- [x] 8.1 Implementar entidade `Transaction` como Aggregate Root — com campos: type, status, grossAmount, discount, interest, penalty, netAmount, currency, exchangeRate, date, competence, description
+- [x] 8.2 Implementar `Transaction.confirm()` — transição Pendente → Confirmada, publica `TransactionPosted`
+- [x] 8.3 Implementar `Transaction.cancel()` — transição Pendente → Cancelada, publica `TransactionCancelled`
+- [x] 8.4 Implementar `Transaction.refund()` — transição Confirmada → Estornada, publica `TransactionRefunded`
+- [x] 8.5 Implementar validação da máquina de estados (transições proibidas lançam `DomainError`)
+- [x] 8.6 Implementar cálculo de valor líquido: `netAmount = grossAmount - discount + interest + penalty`
+- [x] 8.7 Implementar `Transaction.edit()` — apenas campos permitidos, apenas se Pendente, registra auditoria
 
 ## 9. Financeiro — Domínio (Parcelamentos)
 
-- [ ] 9.1 Implementar entidade `Installment` — com: number, amount, dueDate, status (Pendente/Paga/Atrasada), paymentDate, parentTransactionId
-- [ ] 9.2 Implementar máquina de estados da Parcela: Pendente → Paga, Pendente → Atrasada, Atrasada → Paga
-- [ ] 9.3 Implementar `Installment.pay(paymentDate, accountId)` — publica `InstallmentPaid`
-- [ ] 9.4 Implementar `Installment.markOverdue()` — publica `InstallmentOverdue`
-- [ ] 9.5 Implementar `Installment.changeDueDate(newDate)` — apenas se Pendente, registra auditoria
-- [ ] 9.6 Implementar invariante RN-05 (parcelas com vida própria, origem comum)
+- [x] 9.1 Implementar entidade `Installment` — com: number, amount, dueDate, status (Pendente/Paga/Atrasada), paymentDate, parentTransactionId
+- [x] 9.2 Implementar máquina de estados da Parcela: Pendente → Paga, Pendente → Atrasada, Atrasada → Paga
+- [x] 9.3 Implementar `Installment.pay(paymentDate, accountId)` — publica `InstallmentPaid`
+- [x] 9.4 Implementar `Installment.markOverdue()` — publica `InstallmentOverdue`
+- [x] 9.5 Implementar `Installment.changeDueDate(newDate)` — apenas se Pendente, registra auditoria
+- [x] 9.6 Implementar invariante RN-05 (parcelas com vida própria, origem comum)
 
 ## 10. Financeiro — Domínio (Transferências)
 
-- [ ] 10.1 Implementar serviço de domínio `TransferService` — orquestra débito + crédito atômicos
-- [ ] 10.2 Implementar validação de saldo antes da transferência
-- [ ] 10.3 Implementar suporte a transferência entre moedas diferentes com `ExchangeRate`
-- [ ] 10.4 Implementar invariante RN-04 (atomicidade: débito e crédito vinculados por `transferId`)
-- [ ] 10.5 Implementar invariante RN-07 (transações multimoeda exigem taxa de câmbio registrada)
-- [ ] 10.6 Implementar `TransferService.reverse()` — estorna transferência, publica `TransferReversed`
+- [x] 10.1 Implementar serviço de domínio `TransferService` — orquestra débito + crédito atômicos
+- [x] 10.2 Implementar validação de saldo antes da transferência
+- [x] 10.3 Implementar suporte a transferência entre moedas diferentes com `ExchangeRate`
+- [x] 10.4 Implementar invariante RN-04 (atomicidade: débito e crédito vinculados por `transferId`)
+- [x] 10.5 Implementar invariante RN-07 (transações multimoeda exigem taxa de câmbio registrada)
+- [x] 10.6 Implementar `TransferService.reverse()` — estorna transferência, publica `TransferReversed`
 
 ## 11. Financeiro — Domínio (Recorrências)
 
-- [ ] 11.1 Implementar entidade `Recurrence` — com: description, amount, accountId, categoryId, periodicity, startDate, endDate?, maxOccurrences?, status
-- [ ] 11.2 Implementar `Recurrence.pause()` e `Recurrence.resume()`
-- [ ] 11.3 Implementar `Recurrence.cancel()` — interrompe geração futura, mantém transações existentes
-- [ ] 11.4 Implementar `RecurrenceService` — calcula próxima data de ocorrência para cada periodicidade
-- [ ] 11.5 Implementar tratamento de edge cases de datas (dia 31, fevereiro, anos bissextos)
+- [x] 11.1 Implementar entidade `Recurrence` — com: description, amount, accountId, categoryId, periodicity, startDate, endDate?, maxOccurrences?, status
+- [x] 11.2 Implementar `Recurrence.pause()` e `Recurrence.resume()`
+- [x] 11.3 Implementar `Recurrence.cancel()` — interrompe geração futura, mantém transações existentes
+- [x] 11.4 Implementar `RecurrenceService` — calcula próxima data de ocorrência para cada periodicidade
+- [x] 11.5 Implementar tratamento de edge cases de datas (dia 31, fevereiro, anos bissextos)
 
 ## 12. Financeiro — Infraestrutura
 
