@@ -1,88 +1,53 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { FastifyPluginAsync, preHandlerHookHandler } from "fastify";
 import type { CompanyController } from "../identity/api/company-controller.js";
+import { getAuthContext } from "../identity/api/middlewares.js";
+import { sendResult } from "./reply.js";
 
-/**
- * Route definition.
- */
-export interface Route {
-  method: string;
-  path: string;
-  handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+export interface CompanyRoutesDependencies {
+  controller: CompanyController;
+  authenticate: preHandlerHookHandler;
 }
 
 /**
- * Creates company routes for the given controller.
+ * Company routes, mounted under /api/v1/companies.
+ * Every route requires a valid access token.
  */
-export function createCompanyRoutes(controller: CompanyController): Route[] {
-  return [
-    {
-      method: "POST",
-      path: "/api/v1/companies",
-      handler: (req, res) =>
-        controller.create(req).then((result) => {
-          sendResponse(res, result.statusCode, result.body);
-        }),
-    },
-  ];
-}
+export function createCompanyRoutes(
+  deps: CompanyRoutesDependencies,
+): FastifyPluginAsync {
+  const { controller, authenticate } = deps;
 
-/**
- * Creates company user routes.
- */
-export function createCompanyUserRoutes(
-  controller: CompanyController,
-): Route[] {
-  return [
-    {
-      method: "POST",
-      path: "/api/v1/companies/:companyId/users",
-      handler: async (req, res) => {
-        const companyId = extractParam(req.url, 4);
-        if (!companyId) {
-          sendResponse(res, 400, { error: "Invalid company ID" });
-          return;
-        }
-        const result = await controller.inviteUser(companyId, req);
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-    {
-      method: "DELETE",
-      path: "/api/v1/companies/:companyId/users/:userId",
-      handler: async (req, res) => {
-        const companyId = extractParam(req.url, 4);
-        const userId = extractParam(req.url, 6);
-        if (!companyId || !userId) {
-          sendResponse(res, 400, { error: "Invalid parameters" });
-          return;
-        }
-        const result = await controller.removeUser(companyId, userId);
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-  ];
-}
+  return async (app) => {
+    // Scoped to this plugin only — Fastify encapsulation keeps it off /auth
+    app.addHook("preHandler", authenticate);
 
-/**
- * Helper to extract URL parameter.
- */
-function extractParam(
-  url: string | undefined,
-  index: number,
-): string | undefined {
-  if (!url) return undefined;
-  const parts = url.split("/");
-  return parts[index];
-}
+    app.post("/", async (request, reply) =>
+      sendResult(reply, await controller.create(request.body)),
+    );
 
-/**
- * Helper to send JSON response.
- */
-export function sendResponse(
-  res: ServerResponse,
-  statusCode: number,
-  body: unknown,
-): void {
-  res.writeHead(statusCode, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
+    app.get("/", async (request, reply) =>
+      sendResult(reply, await controller.list(getAuthContext(request).userId)),
+    );
+
+    app.post<{ Params: { companyId: string } }>(
+      "/:companyId/users",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.inviteUser(request.params.companyId, request.body),
+        ),
+    );
+
+    app.delete<{ Params: { companyId: string; userId: string } }>(
+      "/:companyId/users/:userId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.removeUser(
+            request.params.companyId,
+            request.params.userId,
+          ),
+        ),
+    );
+  };
 }

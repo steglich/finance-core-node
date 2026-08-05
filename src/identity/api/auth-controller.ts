@@ -1,5 +1,4 @@
-import type { IncomingMessage } from "node:http";
-import { DomainError } from "../../shared/domain/domain-error.js";
+import type { ControllerResult } from "../../shared/api/controller-result.js";
 import type { UserRepository } from "../infrastructure/user-repository.js";
 import type { CompanyRepository } from "../infrastructure/company-repository.js";
 import type { ProfileRepository } from "../infrastructure/profile-repository.js";
@@ -7,16 +6,20 @@ import type { PasswordService } from "../domain/password-service.js";
 import type { JwtTokenService } from "../infrastructure/jwt-token-service.js";
 import type { CategoryRepository } from "../../financeiro/infrastructure/category-repository.js";
 import type { DatabaseConnection } from "../../shared/infrastructure/database-connection.js";
-import { User } from "../domain/user.js";
-import { Email } from "../domain/email.js";
 import { UserService, CompanyService } from "../domain/user-service.js";
 import {
+  validateLoginRequest,
+  validateRecoverPasswordRequest,
+  validateRefreshTokenRequest,
   validateRegisterUserRequest,
-  type RegisterUserRequest,
+  validateResetPasswordRequest,
 } from "./dtos.js";
 
 /**
  * Authentication controller handling auth endpoints.
+ *
+ * Controllers receive already-parsed input and return a `ControllerResult`.
+ * Domain errors are thrown and translated to HTTP by the server error handler.
  */
 export class AuthController {
   constructor(
@@ -32,225 +35,132 @@ export class AuthController {
   /**
    * Handles POST /api/v1/auth/register.
    */
-  async register(
-    req: IncomingMessage,
-  ): Promise<{ statusCode: number; body: unknown }> {
-    let rawBody: RegisterUserRequest;
-    try {
-      const parsed = await this.parseBody(req);
-      rawBody = parsed as RegisterUserRequest;
-    } catch {
-      return {
-        statusCode: 400,
-        body: { error: "Invalid JSON body" },
-      };
-    }
-
-    const validation = validateRegisterUserRequest(rawBody);
+  async register(body: unknown): Promise<ControllerResult> {
+    const validation = validateRegisterUserRequest(body);
     if (!validation.success) {
-      return {
-        statusCode: 400,
-        body: { error: validation.error.message },
-      };
+      return { statusCode: 400, body: { error: validation.error.message } };
     }
 
-    try {
-      const userService = new UserService(
-        this.userRepository,
+    const userService = new UserService(
+      this.userRepository,
+      this.companyRepository,
+      this.profileRepository,
+      this.passwordService,
+    );
+
+    // Create user with personal company (RN-08)
+    const result = await this.databaseConnection.transaction(async () => {
+      const { user } = await userService.create(validation.data);
+
+      const companyService = new CompanyService(
         this.companyRepository,
-        this.profileRepository,
-        this.passwordService,
+        this.categoryRepository,
       );
 
-      // Create user with personal company (RN-08)
-      const result = await this.databaseConnection.transaction(async () => {
-        const { user } = await userService.create(validation.data);
-
-        // Create personal company for the user
-        const companyService = new CompanyService(
-          this.companyRepository,
-          this.categoryRepository,
-        );
-
-        const companyResult = await companyService.create({
-          name: `${validation.data.name}'s Company`,
-          type: "INDIVIDUAL" as const,
-          defaultCurrency: "BRL",
-        });
-
-        // Add user to their own company with admin profile
-        await this.companyRepository.addUser(
-          companyResult.companyId,
-          user.id,
-          undefined,
-        );
-
-        return { user, companyId: companyResult.companyId };
+      const companyResult = await companyService.create({
+        name: `${validation.data.name}'s Company`,
+        type: "INDIVIDUAL" as const,
+        defaultCurrency: "BRL",
       });
 
-      // Generate tokens
-      const accessToken = this.jwtTokenService.generateAccessToken({
-        userId: result.user.id,
+      // Add user to their own company with admin profile
+      await this.companyRepository.addUser(
+        companyResult.companyId,
+        user.id,
+        undefined,
+      );
+
+      return { user, companyId: companyResult.companyId };
+    });
+
+    const tokens = this.issueTokens(result.user.id, result.companyId);
+
+    return {
+      statusCode: 201,
+      body: {
+        user: result.user.toJSON(),
+        tokens,
         companyId: result.companyId,
-      });
-      const refreshToken = this.jwtTokenService.generateRefreshToken({
-        userId: result.user.id,
-        companyId: result.companyId,
-      });
-
-      return {
-        statusCode: 201,
-        body: {
-          user: result.user.toJSON(),
-          tokens: { accessToken, refreshToken },
-          companyId: result.companyId,
-        },
-      };
-    } catch (error) {
-      const domainError = error as DomainError;
-      if (domainError instanceof DomainError) {
-        return {
-          statusCode: this.toHttpStatusCode(domainError.code),
-          body: { error: domainError.message },
-        };
-      }
-      throw error;
-    }
+      },
+    };
   }
 
   /**
    * Handles POST /api/v1/auth/login.
    */
-  async login(
-    req: IncomingMessage,
-  ): Promise<{ statusCode: number; body: unknown }> {
-    let rawBody: { email: string; password: string };
-    try {
-      const parsed = await this.parseBody(req);
-      rawBody = parsed as { email: string; password: string };
-    } catch {
-      return {
-        statusCode: 400,
-        body: { error: "Invalid JSON body" },
-      };
+  async login(body: unknown): Promise<ControllerResult> {
+    const validation = validateLoginRequest(body);
+    if (!validation.success) {
+      return { statusCode: 400, body: { error: validation.error.message } };
     }
 
-    // Validate email format - Email constructor throws if invalid
-    let email: Email;
-    try {
-      email = new Email(rawBody.email);
-    } catch (error) {
-      return {
-        statusCode: 400,
-        body: { error: "Valid email is required" },
-      };
-    }
+    const userService = new UserService(
+      this.userRepository,
+      this.companyRepository,
+      this.profileRepository,
+      this.passwordService,
+    );
 
-    try {
-      const userService = new UserService(
-        this.userRepository,
-        this.companyRepository,
-        this.profileRepository,
-        this.passwordService,
-      );
+    const result = await userService.authenticate(
+      validation.data.email,
+      validation.data.password,
+    );
 
-      const result = await userService.authenticate(
-        email.value,
-        rawBody.password,
-      );
+    const companyIds = await this.companyRepository.findUserCompanies(
+      result.user.id,
+    );
 
-      // Get user's companies
-      const companyIds = await this.companyRepository.findUserCompanies(
-        result.user.id,
-      );
+    // The token is scoped to the first company until the user selects another
+    const tokens = this.issueTokens(result.user.id, companyIds[0] ?? "");
 
-      // Generate tokens (use first company or empty string)
-      const accessToken = this.jwtTokenService.generateAccessToken({
-        userId: result.user.id,
-        companyId: companyIds[0] ?? "",
-      });
-      const refreshToken = this.jwtTokenService.generateRefreshToken({
-        userId: result.user.id,
-        companyId: companyIds[0] ?? "",
-      });
-
-      return {
-        statusCode: 200,
-        body: {
-          user: result.user.toJSON(),
-          tokens: { accessToken, refreshToken },
-          companies: companyIds.map((id) => ({ id })),
-        },
-      };
-    } catch (error) {
-      const domainError = error as DomainError;
-      if (domainError instanceof DomainError) {
-        return {
-          statusCode: this.toHttpStatusCode(domainError.code),
-          body: { error: domainError.message },
-        };
-      }
-      throw error;
-    }
+    return {
+      statusCode: 200,
+      body: {
+        user: result.user.toJSON(),
+        tokens,
+        companies: companyIds.map((id) => ({ id })),
+      },
+    };
   }
 
   /**
    * Handles POST /api/v1/auth/refresh.
    */
-  async refresh(
-    req: IncomingMessage,
-  ): Promise<{ statusCode: number; body: unknown }> {
-    let rawBody: { refreshToken: string };
-    try {
-      const parsed = await this.parseBody(req);
-      rawBody = parsed as { refreshToken: string };
-    } catch {
-      return {
-        statusCode: 400,
-        body: { error: "Invalid JSON body" },
-      };
+  async refresh(body: unknown): Promise<ControllerResult> {
+    const validation = validateRefreshTokenRequest(body);
+    if (!validation.success) {
+      return { statusCode: 400, body: { error: validation.error.message } };
     }
 
+    let decoded: { userId: string; companyId: string };
     try {
-      const decoded = this.jwtTokenService.verifyRefreshToken(
-        rawBody.refreshToken,
+      decoded = this.jwtTokenService.verifyRefreshToken(
+        validation.data.refreshToken,
       );
-
-      // Generate new tokens
-      const accessToken = this.jwtTokenService.generateAccessToken(decoded);
-      const refreshToken = this.jwtTokenService.generateRefreshToken(decoded);
-
-      return {
-        statusCode: 200,
-        body: { tokens: { accessToken, refreshToken } },
-      };
     } catch {
       return {
         statusCode: 401,
         body: { error: "Invalid or expired refresh token" },
       };
     }
+
+    return {
+      statusCode: 200,
+      body: { tokens: this.issueTokens(decoded.userId, decoded.companyId) },
+    };
   }
 
   /**
    * Handles POST /api/v1/auth/recover-password.
    */
-  async recoverPassword(
-    req: IncomingMessage,
-  ): Promise<{ statusCode: number; body: unknown }> {
-    let rawBody: { email: string };
-    try {
-      const parsed = await this.parseBody(req);
-      rawBody = parsed as { email: string };
-    } catch {
-      return {
-        statusCode: 400,
-        body: { error: "Invalid JSON body" },
-      };
+  async recoverPassword(body: unknown): Promise<ControllerResult> {
+    const validation = validateRecoverPasswordRequest(body);
+    if (!validation.success) {
+      return { statusCode: 400, body: { error: validation.error.message } };
     }
 
-    // In a real implementation, this would send an email with a reset token
-    // For now, we just acknowledge the request without exposing whether the user exists
+    // In a real implementation, this would send an email with a reset token.
+    // The response never reveals whether the email exists.
     return {
       statusCode: 200,
       body: { message: "If the email exists, a reset link has been sent" },
@@ -260,18 +170,10 @@ export class AuthController {
   /**
    * Handles POST /api/v1/auth/reset-password.
    */
-  async resetPassword(
-    req: IncomingMessage,
-  ): Promise<{ statusCode: number; body: unknown }> {
-    let rawBody: { token: string; newPassword: string };
-    try {
-      const parsed = await this.parseBody(req);
-      rawBody = parsed as { token: string; newPassword: string };
-    } catch {
-      return {
-        statusCode: 400,
-        body: { error: "Invalid JSON body" },
-      };
+  async resetPassword(body: unknown): Promise<ControllerResult> {
+    const validation = validateResetPasswordRequest(body);
+    if (!validation.success) {
+      return { statusCode: 400, body: { error: validation.error.message } };
     }
 
     // In a real implementation, this would verify the token and update the password
@@ -281,33 +183,14 @@ export class AuthController {
     };
   }
 
-  private async parseBody(req: IncomingMessage): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      req.on("data", (chunk) => chunks.push(chunk));
-      req.on("end", () => {
-        try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString()));
-        } catch (error) {
-          reject(error);
-        }
-      });
-    });
-  }
-
-  private toHttpStatusCode(code: DomainError["code"]): number {
-    switch (code) {
-      case "VALIDATION_ERROR":
-        return 400;
-      case "ENTITY_NOT_FOUND":
-        return 404;
-      case "DUPLICATE_ENTITY":
-        return 409;
-      case "UNAUTHORIZED_ACCESS":
-      case "UNAUTHORIZED":
-        return 401;
-      default:
-        return 500;
-    }
+  private issueTokens(
+    userId: string,
+    companyId: string,
+  ): { accessToken: string; refreshToken: string } {
+    const payload = { userId, companyId };
+    return {
+      accessToken: this.jwtTokenService.generateAccessToken(payload),
+      refreshToken: this.jwtTokenService.generateRefreshToken(payload),
+    };
   }
 }

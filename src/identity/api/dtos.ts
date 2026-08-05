@@ -399,3 +399,51 @@ export function validateUpdateProfileRequest(
 
   return { success: true, data: result };
 }
+
+/**
+ * Invite user request DTO.
+ */
+export interface InviteUserRequest {
+  email: string;
+  profileId?: string;
+}
+
+/**
+ * Validates invite user request.
+ */
+export function validateInviteUserRequest(
+  body: unknown,
+): ApiResult<InviteUserRequest> {
+  if (typeof body !== "object" || body === null) {
+    return {
+      success: false,
+      error: DomainError.create("VALIDATION_ERROR", "Invalid request body"),
+    };
+  }
+
+  const b = body as Record<string, unknown>;
+
+  if (typeof b.email !== "string" || !b.email.includes("@")) {
+    return {
+      success: false,
+      error: DomainError.create("VALIDATION_ERROR", "Valid email is required"),
+    };
+  }
+
+  const result: InviteUserRequest = { email: b.email.toLowerCase().trim() };
+
+  if (b.profileId !== undefined) {
+    if (typeof b.profileId !== "string" || b.profileId.length === 0) {
+      return {
+        success: false,
+        error: DomainError.create(
+          "VALIDATION_ERROR",
+          "Profile ID must be a non-empty string",
+        ),
+      };
+    }
+    result.profileId = b.profileId;
+  }
+
+  return { success: true, data: result };
+}

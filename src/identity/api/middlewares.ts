@@ -1,5 +1,6 @@
-import type { IncomingMessage } from "node:http";
+import type { FastifyRequest, preHandlerHookHandler } from "fastify";
 import { DomainError } from "../../shared/domain/domain-error.js";
+import type { JwtTokenService } from "../infrastructure/jwt-token-service.js";
 
 /**
  * Request context with authenticated user info.
@@ -9,132 +10,66 @@ export interface RequestContext {
   companyId: string;
 }
 
-/**
- * Auth middleware that validates JWT and injects user context.
- */
-export class AuthMiddleware {
-  constructor(
-    private readonly jwtTokenService: {
-      verifyAccessToken: (token: string) => {
-        userId: string;
-        companyId: string;
-      };
-    },
-  ) {}
-
-  async execute(
-    req: IncomingMessage,
-  ): Promise<
-    | { continue: true; context: RequestContext }
-    | { continue: false; error: DomainError }
-  > {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return {
-        continue: false,
-        error: DomainError.create(
-          "UNAUTHORIZED_ACCESS",
-          "Authorization header missing or invalid",
-        ),
-      };
-    }
-
-    const token = authHeader.substring(7); // Remove "Bearer " prefix
-
-    try {
-      const decoded = this.jwtTokenService.verifyAccessToken(token);
-      return {
-        continue: true,
-        context: { userId: decoded.userId, companyId: decoded.companyId },
-      };
-    } catch (error) {
-      return {
-        continue: false,
-        error: DomainError.create(
-          "UNAUTHORIZED_ACCESS",
-          error instanceof Error ? error.message : "Invalid token",
-        ),
-      };
-    }
+declare module "fastify" {
+  interface FastifyRequest {
+    /** Populated by the `authenticate` preHandler on protected routes. */
+    authContext?: RequestContext;
   }
 }
 
 /**
- * Permission requirement.
+ * Creates the preHandler that validates the Bearer token and injects the
+ * request context. Register it on every protected route.
  */
-export type PermissionRequirement = {
-  resource: string;
-  action: "READ" | "WRITE" | "DELETE" | "MANAGE";
-};
+export function createAuthenticate(
+  jwtTokenService: JwtTokenService,
+): preHandlerHookHandler {
+  return async (request) => {
+    const authHeader = request.headers.authorization;
 
-/**
- * Middleware factory for permission checking.
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function requirePermission(
-  _permission: PermissionRequirement,
-): (
-  req: IncomingMessage,
-) => Promise<
-  | { continue: true; context: RequestContext }
-  | { continue: false; error: DomainError }
-> {
-  // Note: This is a placeholder implementation. In a real system, you'd check
-  // the user's profile permissions from the database.
-  return async (req: IncomingMessage) => {
-    const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return {
-        continue: false,
-        error: DomainError.create(
-          "UNAUTHORIZED_ACCESS",
-          "Authorization header missing or invalid",
-        ),
-      };
+      throw DomainError.create(
+        "UNAUTHORIZED_ACCESS",
+        "Authorization header missing or invalid",
+      );
     }
 
-    // For now, just pass through - actual permission checking would go here
-    return {
-      continue: true,
-      context: { userId: "", companyId: "" }, // Would be extracted from token in real impl
+    const token = authHeader.substring("Bearer ".length);
+    const decoded = jwtTokenService.verifyAccessToken(token);
+
+    request.authContext = {
+      userId: decoded.userId,
+      companyId: decoded.companyId,
     };
   };
 }
 
 /**
- * Combines multiple middlewares into one.
+ * Reads the authenticated context. Throws when the route was not protected by
+ * `createAuthenticate`, so a missing context can never silently become an
+ * empty company scope.
  */
-export async function chainMiddlewares(
-  req: IncomingMessage,
-  middlewareFns: ((
-    req: IncomingMessage,
-  ) => Promise<
-    | { continue: true; context: RequestContext }
-    | { continue: false; error: DomainError }
-  >)[],
-): Promise<
-  | { continue: true; context?: RequestContext }
-  | { continue: false; error: DomainError }
-> {
-  let context: RequestContext | undefined;
-
-  for (const middleware of middlewareFns) {
-    const result = await middleware(req);
-
-    if (!result.continue) {
-      return { continue: false, error: result.error };
-    }
-
-    // Extract context from the first successful auth middleware
-    if ("context" in result && result.context !== undefined) {
-      context = result.context;
-    }
+export function getAuthContext(request: FastifyRequest): RequestContext {
+  const context = request.authContext;
+  if (!context) {
+    throw DomainError.create(
+      "UNAUTHORIZED_ACCESS",
+      "Authentication is required for this route",
+    );
   }
+  return context;
+}
 
-  // Return with or without context based on whether we have one
-  if (context !== undefined) {
-    return { continue: true, context };
+/**
+ * Reads the company scope of the authenticated request.
+ */
+export function getCompanyId(request: FastifyRequest): string {
+  const { companyId } = getAuthContext(request);
+  if (!companyId) {
+    throw DomainError.create(
+      "COMPANY_CONTEXT_REQUIRED",
+      "No company selected for this token",
+    );
   }
-  return { continue: true };
+  return companyId;
 }

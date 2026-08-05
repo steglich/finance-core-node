@@ -1,131 +1,147 @@
-import {
-  createServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
+import Fastify, {
+  type FastifyError,
+  type FastifyInstance,
+} from "fastify";
 import type { DatabaseConnection } from "./shared/infrastructure/database-connection.js";
 import { createDatabaseConnection } from "./shared/infrastructure/database-connection.js";
 import { createLogger } from "./shared/infrastructure/logger.js";
-import type { UserRepository } from "./identity/infrastructure/user-repository.js";
+import { DomainError } from "./shared/domain/domain-error.js";
+import { toHttpStatusCode } from "./shared/api/controller-result.js";
 import { KnexUserRepository } from "./identity/infrastructure/knex-user-repository.js";
-import type { CompanyRepository } from "./identity/infrastructure/company-repository.js";
 import { KnexCompanyRepository } from "./identity/infrastructure/knex-company-repository.js";
-import type { ProfileRepository } from "./identity/infrastructure/profile-repository.js";
 import { KnexProfileRepository } from "./identity/infrastructure/knex-profile-repository.js";
-import type { PasswordService } from "./identity/domain/password-service.js";
 import { createPasswordService } from "./identity/domain/password-service.js";
-import type { JwtTokenService } from "./identity/infrastructure/jwt-token-service.js";
 import { createJwtTokenService } from "./identity/infrastructure/jwt-token-service.js";
-import type { CategoryRepository } from "./financeiro/infrastructure/category-repository.js";
 import { KnexCategoryRepository } from "./financeiro/infrastructure/knex-category-repository.js";
 import { AuthController } from "./identity/api/auth-controller.js";
 import { CompanyController } from "./identity/api/company-controller.js";
 import { ProfileController } from "./identity/api/profile-controller.js";
-import { createRoutes, handleRoute } from "./routes/index.js";
+import { createAuthenticate } from "./identity/api/middlewares.js";
+import { registerRoutes } from "./routes/index.js";
 
+/**
+ * HTTP application: composition root + Fastify instance.
+ */
 export class AppServer {
-  private readonly server;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private database!: DatabaseConnection;
   private readonly logger = createLogger();
+  private readonly app: FastifyInstance = Fastify({ logger: false });
+  private database?: DatabaseConnection;
+  private ready?: Promise<void>;
 
-  // Repositories
-  private userRepository!: UserRepository;
-  private companyRepository!: CompanyRepository;
-  private profileRepository!: ProfileRepository;
-  private categoryRepository!: CategoryRepository;
-
-  // Services
-  private passwordService!: PasswordService;
-  private jwtTokenService!: JwtTokenService;
-
-  // Controllers
-  private authController!: AuthController;
-  private companyController!: CompanyController;
-  private profileController!: ProfileController;
-
-  constructor() {
-    this.server = createServer(this.handleRequest.bind(this));
+  /**
+   * Wires dependencies and registers hooks and routes. Idempotent.
+   */
+  initialize(): Promise<void> {
+    this.ready ??= this.build();
+    return this.ready;
   }
 
-  start(port: number): void {
-    this.initialize();
-    this.server.listen(port, () => {
-      console.log(`Server listening on http://localhost:${port}`);
+  async start(port: number): Promise<void> {
+    await this.initialize();
+    await this.app.listen({ port, host: "0.0.0.0" });
+    this.logger.info(`Server listening on http://localhost:${port}`);
+  }
+
+  /**
+   * Closes the HTTP server and, through the onClose hook, the database pool.
+   */
+  async stop(): Promise<void> {
+    await this.app.close();
+  }
+
+  /**
+   * Exposes the Fastify instance (useful for injection in tests).
+   */
+  getInstance(): FastifyInstance {
+    return this.app;
+  }
+
+  private async build(): Promise<void> {
+    // Infrastructure — one connection pool for the whole process lifetime
+    const database = createDatabaseConnection(this.logger);
+    this.database = database;
+    const knex = database.getKnex();
+
+    // Repositories
+    const userRepository = new KnexUserRepository(knex);
+    const companyRepository = new KnexCompanyRepository(knex);
+    const profileRepository = new KnexProfileRepository(knex);
+    const categoryRepository = new KnexCategoryRepository(knex);
+
+    // Services
+    const passwordService = createPasswordService();
+    const jwtTokenService = createJwtTokenService();
+
+    // Controllers
+    const authController = new AuthController(
+      userRepository,
+      companyRepository,
+      profileRepository,
+      passwordService,
+      jwtTokenService,
+      categoryRepository,
+      database,
+    );
+    const companyController = new CompanyController(
+      companyRepository,
+      userRepository,
+      profileRepository,
+    );
+    const profileController = new ProfileController(profileRepository);
+
+    this.registerHooks();
+
+    await registerRoutes(this.app, {
+      authController,
+      companyController,
+      profileController,
+      authenticate: createAuthenticate(jwtTokenService),
     });
+
+    await this.app.ready();
   }
 
-  private initialize(): void {
-    // Initialize database connection
-    this.database = createDatabaseConnection(this.logger);
+  private registerHooks(): void {
+    // CORS for development
+    this.app.addHook("onRequest", async (request, reply) => {
+      reply.header("Access-Control-Allow-Origin", "*");
+      reply.header(
+        "Access-Control-Allow-Methods",
+        "GET, POST, PUT, DELETE, OPTIONS",
+      );
+      reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-    // Initialize repositories
-    const knex = this.database.getKnex();
-    this.userRepository = new KnexUserRepository(knex);
-    this.companyRepository = new KnexCompanyRepository(knex);
-    this.profileRepository = new KnexProfileRepository(knex);
-    this.categoryRepository = new KnexCategoryRepository(knex);
+      if (request.method === "OPTIONS") {
+        return reply.code(204).send();
+      }
+      return undefined;
+    });
 
-    // Initialize services
-    this.passwordService = createPasswordService();
-    this.jwtTokenService = createJwtTokenService();
+    // Single translation point from errors to HTTP responses
+    this.app.setErrorHandler<FastifyError>((error, _request, reply) => {
+      if (error instanceof DomainError) {
+        return reply
+          .code(toHttpStatusCode(error.code))
+          .send({ error: error.message });
+      }
 
-    // Initialize controllers
-    this.authController = new AuthController(
-      this.userRepository,
-      this.companyRepository,
-      this.profileRepository,
-      this.passwordService,
-      this.jwtTokenService,
-      this.categoryRepository,
-      this.database,
+      // Fastify's own client errors (bad JSON, unsupported media type, ...)
+      const statusCode = error.statusCode ?? 500;
+      if (statusCode < 500) {
+        return reply.code(statusCode).send({ error: error.message });
+      }
+
+      this.logger.error("Unhandled error", error);
+      return reply.code(500).send({ error: "Internal server error" });
+    });
+
+    this.app.setNotFoundHandler((_request, reply) =>
+      reply.code(404).send({ error: "Not found" }),
     );
 
-    this.companyController = new CompanyController(
-      this.companyRepository,
-      this.userRepository,
-      this.profileRepository,
-    );
-
-    this.profileController = new ProfileController(this.profileRepository);
-  }
-
-  private async handleRequest(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    // Set CORS headers for development
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET, POST, PUT, DELETE, OPTIONS",
-    );
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization",
-    );
-
-    // Handle preflight requests
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    try {
-      const routes = createRoutes({
-        authController: this.authController,
-        companyController: this.companyController,
-        profileController: this.profileController,
-      });
-
-      await handleRoute(req, res, routes);
-    } catch (error) {
-      this.logger.error("Unhandled error", error as Error);
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Internal server error" }));
-    } finally {
-      await this.database.close();
-    }
+    // The pool is released once, on shutdown — never per request
+    this.app.addHook("onClose", async () => {
+      await this.database?.close();
+    });
   }
 }

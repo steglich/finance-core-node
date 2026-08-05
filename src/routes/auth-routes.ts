@@ -1,79 +1,32 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { FastifyPluginAsync } from "fastify";
 import type { AuthController } from "../identity/api/auth-controller.js";
+import { sendResult } from "./reply.js";
 
 /**
- * Route handler function type.
+ * Public authentication routes, mounted under /api/v1/auth.
  */
-export type RouteHandler = (
-  req: IncomingMessage,
-  res: ServerResponse,
-) => Promise<void>;
+export function createAuthRoutes(
+  controller: AuthController,
+): FastifyPluginAsync {
+  return async (app) => {
+    app.post("/register", async (request, reply) =>
+      sendResult(reply, await controller.register(request.body)),
+    );
 
-/**
- * Route definition.
- */
-export interface Route {
-  method: string;
-  path: string;
-  handler: RouteHandler;
-}
+    app.post("/login", async (request, reply) =>
+      sendResult(reply, await controller.login(request.body)),
+    );
 
-/**
- * Creates auth routes for the given controller.
- */
-export function createAuthRoutes(controller: AuthController): Route[] {
-  return [
-    {
-      method: "POST",
-      path: "/api/v1/auth/register",
-      handler: async (req, res) => {
-        const result = await controller.register(req);
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-    {
-      method: "POST",
-      path: "/api/v1/auth/login",
-      handler: async (req, res) => {
-        const result = await controller.login(req);
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-    {
-      method: "POST",
-      path: "/api/v1/auth/refresh",
-      handler: async (req, res) => {
-        const result = await controller.refresh(req);
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-    {
-      method: "POST",
-      path: "/api/v1/auth/recover-password",
-      handler: async (req, res) => {
-        const result = await controller.recoverPassword(req);
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-    {
-      method: "POST",
-      path: "/api/v1/auth/reset-password",
-      handler: async (req, res) => {
-        const result = await controller.resetPassword(req);
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-  ];
-}
+    app.post("/refresh", async (request, reply) =>
+      sendResult(reply, await controller.refresh(request.body)),
+    );
 
-/**
- * Helper to send JSON response.
- */
-export function sendResponse(
-  res: ServerResponse,
-  statusCode: number,
-  body: unknown,
-): void {
-  res.writeHead(statusCode, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
+    app.post("/recover-password", async (request, reply) =>
+      sendResult(reply, await controller.recoverPassword(request.body)),
+    );
+
+    app.post("/reset-password", async (request, reply) =>
+      sendResult(reply, await controller.resetPassword(request.body)),
+    );
+  };
 }

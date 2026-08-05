@@ -19,6 +19,7 @@ Este documento define as regras, convenções e padrões que todo agente de IA d
 
 | Ferramenta | Uso |
 |---|---|
+| `fastify` | Servidor HTTP, roteamento e parsing de body |
 | `tsx` | Dev server com hot-reload (`npm run dev`) |
 | `tsc` | Compilação TypeScript (`npm run build`) |
 | `node` | Execução em produção (`npm start`) |
@@ -27,9 +28,10 @@ Este documento define as regras, convenções e padrões que todo agente de IA d
 | `jsonwebtoken` | Access/refresh tokens (`JwtTokenService`) |
 | `dotenv` | Carrega `.env` no `src/index.ts` |
 
-Não há framework HTTP (Express/Fastify), ORM, biblioteca de validação (Zod) nem
-test runner. O servidor usa `node:http` puro, as queries usam Knex direto e a
-validação de entrada é feita à mão em `dtos.ts`. Mantenha esse padrão.
+O HTTP é servido pelo Fastify (v5), mas **sem plugins externos** — CORS, auth e
+tratamento de erro são hooks próprios em `app.server.ts`. Não há ORM, biblioteca
+de validação (Zod) nem test runner: as queries usam Knex direto e a validação de
+entrada é feita à mão em `dtos.ts`. Mantenha esse padrão.
 
 **Nenhuma dependência externa** deve ser adicionada sem antes perguntar.
 - **Sempre instale dependências com versão exata** (fixa, sem `^` ou `~`). Isso trava a versão usada e previne Supply Chain Attacks — uma dependência comprometida não será atualizada silenciosamente.
@@ -80,13 +82,14 @@ O `tsconfig.json` é **restritivo por design**. Siga estas regras:
 ```
 src/
 ├── index.ts            # Entry point — carrega .env e sobe o AppServer
-├── app.server.ts       # AppServer — composition root + servidor node:http
+├── app.server.ts       # AppServer — composition root + instância Fastify (hooks, error handler)
 ├── knexfile.ts         # Config do Knex (migrations/, seeds/, DATABASE_URL)
 ├── migrations/         # Migrations Knex (identity → finance → transaction → audit)
 ├── seeds/              # Dados padrão e categorias padrão
-├── routes/             # Roteador próprio + definição de rotas por contexto
+├── routes/             # Plugins Fastify por contexto + `sendResult` (reply.ts)
 ├── shared/             # Primitivas de domínio e infraestrutura transversal
 │   ├── domain/         # Entity, AggregateRoot, ValueObject, Result, DomainError, DomainEventBus
+│   ├── api/            # ControllerResult + mapeamento DomainErrorCode → HTTP
 │   └── infrastructure/ # DatabaseConnection (Knex), Logger
 ├── identity/           # Bounded context: usuários, empresas, perfis, auth
 │   ├── domain/         # Entidades, VOs (Email, Cpf, Cnpj, Password) e services
@@ -109,9 +112,12 @@ aponta sempre para dentro: `api` → `domain` ← `infrastructure`.
 - **`infrastructure/`** — a *interface* do repositório (`user-repository.ts`) e a
   implementação Knex (`knex-user-repository.ts`) ficam lado a lado. O domínio e
   os controllers dependem da interface, nunca da implementação.
-- **`api/`** — controllers que recebem `IncomingMessage` e retornam
-  `{ statusCode, body }`; DTOs com funções `validateXRequest`; middlewares.
-  Controllers não escrevem na resposta — quem faz isso é a rota.
+- **`api/`** — controllers que recebem entrada **já parseada** (body, params,
+  contexto) e retornam `ControllerResult { statusCode, body }`; DTOs com funções
+  `validateXRequest`; middlewares (hooks Fastify). Controllers não conhecem
+  `FastifyRequest`/`FastifyReply` — quem responde é a rota, via `sendResult`.
+  Erros de domínio podem ser lançados: o error handler do `AppServer` traduz
+  `DomainErrorCode` em status HTTP.
 
 ### Padrões Obrigatórios
 
@@ -130,23 +136,29 @@ aponta sempre para dentro: `api` → `domain` ← `infrastructure`.
 
 ### Composition Root
 
-Não existe container de DI. Tudo é instanciado à mão em
-`AppServer.initialize()`, na ordem: `DatabaseConnection` → repositórios (recebem
-o `Knex`) → services → controllers. Ao criar um recurso novo, registre-o ali e
-injete via construtor.
+Não existe container de DI. Tudo é instanciado à mão em `AppServer.build()`
+(chamado por `initialize()`), na ordem: `DatabaseConnection` → repositórios
+(recebem o `Knex`) → services → controllers → `registerRoutes()`. Ao criar um
+recurso novo, registre-o ali e injete via construtor. O pool do banco vive todo
+o processo e é fechado no hook `onClose` do Fastify.
 
 ### Rotas
 
-O roteador é próprio (`src/routes/index.ts`): `createRoutes()` monta o array e
-`handleRoute()` percorre em ordem, casando `method` + `matchPath()` (suporta
-`:param`, mas **não** extrai os valores — o controller lê o `req.url`).
+O roteamento é do Fastify (radix tree) — **a ordem de registro não importa** e
+`:param` é extraído em `request.params`.
 
-- **A ordem importa:** rotas mais específicas primeiro.
+- `registerRoutes(app, deps)` (`src/routes/index.ts`) monta a árvore: cada
+  contexto é um plugin registrado sob seu prefixo, dentro de `/api/v1`.
 - Rotas novas vão em `src/routes/<contexto>-routes.ts`, com uma factory
-  `createXRoutes(controller)`, e são registradas em `createRoutes()`.
-- Prefixo padrão: `/api/v1/...`.
-- Rotas protegidas usam `AuthMiddleware`, que valida o Bearer token e injeta
-  `RequestContext { userId, companyId }`.
+  `createXRoutes(deps): FastifyPluginAsync`, registrada em `registerRoutes()`.
+  Tipe os params: `app.get<{ Params: { id: string } }>("/:id", ...)`.
+- A rota responde com `sendResult(reply, await controller.x(...))` — nunca monte
+  a resposta no controller.
+- Rotas protegidas registram `app.addHook("preHandler", authenticate)` no
+  próprio plugin (a encapsulação do Fastify limita o hook àquele escopo).
+  Dentro do handler, use `getAuthContext(request)` / `getCompanyId(request)`
+  para ler `RequestContext { userId, companyId }` — o escopo de empresa vem
+  sempre do token, nunca do cliente.
 
 ### Para Novos Recursos
 - Novo conceito de negócio → comece pelo `domain/` do contexto correspondente

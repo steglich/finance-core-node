@@ -1,38 +1,49 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { FastifyPluginAsync, preHandlerHookHandler } from "fastify";
 import type { ProfileController } from "../identity/api/profile-controller.js";
-import { sendResponse } from "./company-routes.js";
+import { getCompanyId } from "../identity/api/middlewares.js";
+import { sendResult } from "./reply.js";
 
-/**
- * Route definition.
- */
-export interface Route {
-  method: string;
-  path: string;
-  handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+export interface ProfileRoutesDependencies {
+  controller: ProfileController;
+  authenticate: preHandlerHookHandler;
 }
 
 /**
- * Creates profile routes for the given controller.
+ * Profile routes, mounted under /api/v1/profiles.
+ * The company scope always comes from the token, never from the client.
  */
-export function createProfileRoutes(controller: ProfileController): Route[] {
-  return [
-    {
-      method: "GET",
-      path: "/api/v1/profiles",
-      handler: async (_req, res) => {
-        // This would need companyId from auth middleware in real implementation
-        const result = await controller.list("");
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-    {
-      method: "POST",
-      path: "/api/v1/profiles",
-      handler: async (req, res) => {
-        // This would need companyId from auth middleware in real implementation
-        const result = await controller.create("", req);
-        sendResponse(res, result.statusCode, result.body);
-      },
-    },
-  ];
+export function createProfileRoutes(
+  deps: ProfileRoutesDependencies,
+): FastifyPluginAsync {
+  const { controller, authenticate } = deps;
+
+  return async (app) => {
+    app.addHook("preHandler", authenticate);
+
+    app.get("/", async (request, reply) =>
+      sendResult(reply, await controller.list(getCompanyId(request))),
+    );
+
+    app.post("/", async (request, reply) =>
+      sendResult(
+        reply,
+        await controller.create(getCompanyId(request), request.body),
+      ),
+    );
+
+    app.put<{ Params: { profileId: string } }>(
+      "/:profileId",
+      async (request, reply) =>
+        sendResult(
+          reply,
+          await controller.update(request.params.profileId, request.body),
+        ),
+    );
+
+    app.delete<{ Params: { profileId: string } }>(
+      "/:profileId",
+      async (request, reply) =>
+        sendResult(reply, await controller.delete(request.params.profileId)),
+    );
+  };
 }
