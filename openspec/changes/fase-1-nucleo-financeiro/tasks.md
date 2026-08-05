@@ -60,14 +60,14 @@
 
 ## 6. Financeiro — Domínio (Value Objects e Entidades Base)
 
-- [ ] 6.1 Implementar value object `Money` (amount: Decimal, currency: string) — imutável, com operações aritméticas, validação de moeda ISO 4217
-- [ ] 6.2 Implementar value object `ExchangeRate` (sourceCurrency, targetCurrency, rate, date) — imutável
-- [ ] 6.3 Implementar value object `Period` (startDate, endDate) — com validação startDate <= endDate
-- [ ] 6.4 Implementar value object `Percent` (value: 0-100) — imutável
-- [ ] 6.5 Implementar entidade `Wallet` (id, companyId, name, institution)
-- [ ] 6.6 Implementar entidade `Account` como Aggregate Root — com `credit()`, `debit()`, `reconcile()`, `deactivate()`
-- [ ] 6.7 Implementar `Account.create()` — valida moeda suportada, gera transação de ajuste para saldo inicial, publica evento
-- [ ] 6.8 Implementar invariante RN-03 (toda transação vinculada a conta) e RN-02 (saldo derivado) no agregado `Account`
+- [x] 6.1 Implementar value object `Money` (amount: Decimal, currency: string) — imutável, com operações aritméticas, validação de moeda ISO 4217
+- [x] 6.2 Implementar value object `ExchangeRate` (sourceCurrency, targetCurrency, rate, date) — imutável
+- [x] 6.3 Implementar value object `Period` (startDate, endDate) — com validação startDate <= endDate
+- [x] 6.4 Implementar value object `Percent` (value: 0-100) — imutável
+- [x] 6.5 Implementar entidade `Wallet` (id, companyId, name, institution)
+- [x] 6.6 Implementar entidade `Account` como Aggregate Root — com `credit()`, `debit()`, `reconcile()`, `deactivate()`
+- [x] 6.7 Implementar `Account.create()` — valida moeda suportada, gera transação de ajuste para saldo inicial, publica evento
+- [x] 6.8 Implementar invariante RN-03 (toda transação vinculada a conta) e RN-02 (saldo derivado) no agregado `Account`
 
 ## 7. Financeiro — Domínio (Categorias)
 
