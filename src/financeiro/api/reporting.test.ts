@@ -4,9 +4,17 @@ import { DashboardController } from "./dashboard-controller.js";
 import { ReportController } from "./report-controller.js";
 import { escapeCsvField, toCsv } from "./csv.js";
 import { validateDashboardQuery, validateReportQuery } from "./dtos.js";
+import { ExchangeService } from "../domain/exchange-service.js";
+import { NetWorthService } from "../domain/net-worth-service.js";
+import type { ExchangeRateRecord } from "../infrastructure/exchange-rate-repository.js";
+import type { NetWorthComponentRow } from "../infrastructure/net-worth-repository.js";
 import type {
   BudgetSummary,
   CostCenterReportRow,
+  DebtSummary,
+  IncomeTaxData,
+  InvestmentReportRow,
+  InvestmentsSummary,
   PayablesSummary,
   ReceivableReportRow,
   ReceivablesSummary,
@@ -48,6 +56,10 @@ class FakeReportingRepository implements ReportingRepository {
       payablesSummary?: PayablesSummary;
       receivables?: ReceivableReportRow[];
       payables?: ReceivableReportRow[];
+      investmentsSummary?: InvestmentsSummary;
+      debtSummary?: DebtSummary;
+      investments?: InvestmentReportRow[];
+      incomeTax?: IncomeTaxData;
     } = {},
   ) {}
 
@@ -167,6 +179,62 @@ class FakeReportingRepository implements ReportingRepository {
   async spendingByAccount(scope: ReportingScope): Promise<SpendingRow[]> {
     this.record(scope);
     return this.data.byAccount ?? [];
+  }
+
+  async investmentsSummary(
+    scope: ReportingScope,
+  ): Promise<InvestmentsSummary> {
+    this.record(scope);
+    return (
+      this.data.investmentsSummary ?? {
+        investedAmount: 0,
+        currentValue: 0,
+        unrealizedResult: 0,
+        realizedResult: 0,
+        incomeReceived: 0,
+        profitabilityPercent: 0,
+        quoted: true,
+        distributionByType: [],
+        currency: "BRL",
+      }
+    );
+  }
+
+  async debtSummary(scope: ReportingScope): Promise<DebtSummary> {
+    this.record(scope);
+    return (
+      this.data.debtSummary ?? {
+        outstandingBalance: 0,
+        dueInPeriod: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+        currency: "BRL",
+      }
+    );
+  }
+
+  async investmentsReport(
+    scope: ReportingScope,
+    investmentType?: string,
+  ): Promise<InvestmentReportRow[]> {
+    this.record(scope);
+    const rows = this.data.investments ?? [];
+    return investmentType
+      ? rows.filter((row) => row.investmentType === investmentType)
+      : rows;
+  }
+
+  async incomeTaxData(companyId: string, year: number): Promise<IncomeTaxData> {
+    return (
+      this.data.incomeTax ?? {
+        year,
+        positions: [],
+        incomeByInvestment: [],
+        realizedResults: [],
+        accountBalances: [],
+        loanBalances: [],
+      }
+    );
   }
 }
 
@@ -488,9 +556,25 @@ describe("Phase 3 dashboard and reports", () => {
 
     assert.ok(reporting.scopes.length > 0);
     for (const scope of reporting.scopes) {
-      assert.deepEqual(scope.costCenterIds, ["cc-marketing"]);
       assert.equal(scope.companyId, COMPANY_ID);
     }
+
+    // The transaction-derived reads narrow with the filter …
+    const filtered = reporting.scopes.filter(
+      (scope) => scope.costCenterIds !== undefined,
+    );
+    assert.ok(filtered.length > 0);
+    for (const scope of filtered) {
+      assert.deepEqual(scope.costCenterIds, ["cc-marketing"]);
+    }
+
+    // … and exactly two reads deliberately do not: the investments summary and
+    // the debt summary, since a position and a debt are not attributable to a
+    // cost center (Phase 4 dashboard spec).
+    const unfiltered = reporting.scopes.filter(
+      (scope) => scope.costCenterIds === undefined,
+    );
+    assert.equal(unfiltered.length, 2);
   });
 
   it("returns the receivables and payables summaries", async () => {
@@ -782,5 +866,550 @@ describe("Phase 3 dashboard and reports", () => {
     });
 
     assert.deepEqual(reporting.scopes[0]?.costCenterIds, ["cc-marketing"]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Phase 4: net worth, investments and income tax                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A net worth service backed by fixed components, so the controller behaviour
+ * can be pinned without a database. The conversion itself is covered by
+ * `net-worth-service.test.ts`.
+ */
+function fakeNetWorthService(
+  components: NetWorthComponentRow[],
+  options: { defaultCurrency?: string; rates?: ExchangeRateRecord[] } = {},
+): NetWorthService {
+  const exchange = new ExchangeService({
+    async upsert(record: ExchangeRateRecord) {
+      return record;
+    },
+    async findForDate(
+      companyId: string,
+      sourceCurrency: string,
+      targetCurrency: string,
+      date: Date,
+    ) {
+      return (
+        (options.rates ?? []).find(
+          (rate) =>
+            rate.sourceCurrency === sourceCurrency &&
+            rate.targetCurrency === targetCurrency &&
+            rate.rateDate.getTime() <= date.getTime(),
+        ) ?? null
+      );
+    },
+    async findByCompany() {
+      return { items: [], total: 0 };
+    },
+  });
+
+  return new NetWorthService(
+    {
+      async netWorthAt() {
+        return components;
+      },
+      async defaultCurrency() {
+        return options.defaultCurrency ?? "BRL";
+      },
+    },
+    exchange,
+  );
+}
+
+function asset(component: string, amount: number, currency = "BRL"): NetWorthComponentRow {
+  return {
+    component: component as NetWorthComponentRow["component"],
+    side: "ASSET",
+    currency,
+    amount,
+  };
+}
+
+function liability(component: string, amount: number): NetWorthComponentRow {
+  return {
+    component: component as NetWorthComponentRow["component"],
+    side: "LIABILITY",
+    currency: "BRL",
+    amount,
+  };
+}
+
+const INVESTMENT_ROWS: InvestmentReportRow[] = [
+  {
+    investmentId: "inv-1",
+    name: "Petrobras PN",
+    investmentType: "STOCK",
+    symbol: "PETR4",
+    currency: "BRL",
+    quantity: 100,
+    averageCost: 32.5,
+    investedAmount: 3250,
+    currentValue: 3800,
+    unrealizedResult: 550,
+    realizedResultInPeriod: 0,
+    incomeReceivedInPeriod: 50,
+    profitabilityPercent: 18.46,
+    quoted: true,
+  },
+  {
+    investmentId: "inv-2",
+    name: "Fundo Imobiliário",
+    investmentType: "REIT",
+    currency: "BRL",
+    quantity: 10,
+    averageCost: 100,
+    investedAmount: 1000,
+    currentValue: 1000,
+    unrealizedResult: 0,
+    realizedResultInPeriod: 0,
+    incomeReceivedInPeriod: 0,
+    profitabilityPercent: 0,
+    quoted: false,
+  },
+];
+
+describe("Phase 4 dashboard", () => {
+  it("returns the investments and debt summaries", async () => {
+    const reporting = new FakeReportingRepository({
+      investmentsSummary: {
+        investedAmount: 10000,
+        currentValue: 11500,
+        unrealizedResult: 1500,
+        realizedResult: 0,
+        incomeReceived: 0,
+        profitabilityPercent: 15,
+        quoted: true,
+        distributionByType: [
+          { investmentType: "STOCK", currentValue: 11500, sharePercent: 100 },
+        ],
+        currency: "BRL",
+      },
+      debtSummary: {
+        outstandingBalance: 8000,
+        dueInPeriod: 1040,
+        overdueAmount: 1040,
+        overdueCount: 2,
+        currency: "BRL",
+      },
+    });
+
+    const result = await new DashboardController(reporting).overview(
+      COMPANY_ID,
+      PERIOD,
+    );
+
+    const summaries = (result.body as Record<string, unknown>)
+      .summaries as Record<string, unknown>;
+
+    const investments = summaries.investments as Record<string, unknown>;
+    assert.equal(investments.investedAmount, 10000);
+    assert.equal(investments.currentValue, 11500);
+    assert.equal(investments.unrealizedResult, 1500);
+    assert.equal(investments.profitabilityPercent, 15);
+
+    const debt = summaries.debt as Record<string, unknown>;
+    assert.equal(debt.outstandingBalance, 8000);
+    assert.equal(debt.overdueAmount, 1040);
+    assert.equal(debt.overdueCount, 2);
+  });
+
+  it("zeroes both summaries for a company with neither investments nor loans", async () => {
+    const reporting = new FakeReportingRepository();
+
+    const result = await new DashboardController(reporting).overview(
+      COMPANY_ID,
+      PERIOD,
+    );
+
+    const summaries = (result.body as Record<string, unknown>)
+      .summaries as Record<string, unknown>;
+
+    assert.equal(
+      (summaries.investments as Record<string, unknown>).currentValue,
+      0,
+    );
+    assert.equal(
+      (summaries.debt as Record<string, unknown>).outstandingBalance,
+      0,
+    );
+  });
+
+  it("reports net worth as assets minus liabilities", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService([
+      asset("ACCOUNT_BALANCES", 5000),
+      asset("INVESTMENT_PORTFOLIO", 10000),
+      liability("LOAN_BALANCES", 4000),
+    ]);
+
+    const result = await new DashboardController(reporting, service).overview(
+      COMPANY_ID,
+      PERIOD,
+    );
+
+    const indicators = (result.body as Record<string, unknown>)
+      .indicators as Record<string, unknown>;
+
+    assert.equal(indicators.netWorth, 11000);
+  });
+
+  it("counts accounts in two currencies at the rate of the reference date", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService(
+      [asset("ACCOUNT_BALANCES", 10000), asset("ACCOUNT_BALANCES", 1000, "USD")],
+      {
+        rates: [
+          {
+            id: "rate-1",
+            companyId: COMPANY_ID,
+            sourceCurrency: "USD",
+            targetCurrency: "BRL",
+            rate: 5.2,
+            rateDate: new Date("2026-01-01T00:00:00Z"),
+            source: "MANUAL",
+          },
+        ],
+      },
+    );
+
+    const result = await new DashboardController(reporting, service).overview(
+      COMPANY_ID,
+      PERIOD,
+    );
+
+    const indicators = (result.body as Record<string, unknown>)
+      .indicators as Record<string, unknown>;
+
+    assert.equal(indicators.netWorth, 15200);
+  });
+
+  it("reports the missing rate instead of a partial net worth", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService([
+      asset("ACCOUNT_BALANCES", 10000),
+      asset("ACCOUNT_BALANCES", 1000, "USD"),
+    ]);
+
+    const result = await new DashboardController(reporting, service).overview(
+      COMPANY_ID,
+      PERIOD,
+    );
+
+    assert.equal(result.statusCode, 422);
+    assert.match(
+      String((result.body as Record<string, unknown>).error),
+      /USD\/BRL/,
+    );
+  });
+
+  it("defaults the display currency to the company's", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService([], { defaultCurrency: "USD" });
+
+    const result = await new DashboardController(reporting, service).overview(
+      COMPANY_ID,
+      PERIOD,
+    );
+
+    assert.equal(
+      (result.body as Record<string, unknown>).displayCurrency,
+      "USD",
+    );
+  });
+
+  it("honours an explicit display currency", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService([], { defaultCurrency: "USD" });
+
+    const result = await new DashboardController(reporting, service).overview(
+      COMPANY_ID,
+      { ...PERIOD, displayCurrency: "BRL" },
+    );
+
+    assert.equal(
+      (result.body as Record<string, unknown>).displayCurrency,
+      "BRL",
+    );
+  });
+});
+
+describe("Phase 4 reports", () => {
+  it("produces the net worth report in asset and liability sections", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService([
+      asset("ACCOUNT_BALANCES", 20000),
+      asset("INVESTMENT_PORTFOLIO", 30000),
+      liability("LOAN_BALANCES", 10000),
+    ]);
+
+    const result = await new ReportController(reporting, service).generate(
+      COMPANY_ID,
+      "net-worth",
+      { start: "2026-07-01", end: "2026-07-31" },
+    );
+
+    assert.equal(result.statusCode, 200);
+    const body = result.body as Record<string, unknown>;
+    const sections = body.sections as { title: string; rows: unknown[][] }[];
+
+    assert.deepEqual(
+      sections.map((section) => section.title),
+      ["Ativos", "Passivos", "Patrimônio líquido"],
+    );
+    assert.equal(sections[0]?.rows.at(-1)?.at(-1), 50000);
+    assert.equal(sections[1]?.rows.at(-1)?.at(-1), 10000);
+    assert.equal(sections[2]?.rows[0]?.at(-1), 40000);
+  });
+
+  it("adds the monthly evolution when the period spans more than one month", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService([asset("ACCOUNT_BALANCES", 1000)]);
+
+    const result = await new ReportController(reporting, service).generate(
+      COMPANY_ID,
+      "net-worth",
+      { start: "2026-01-01", end: "2026-03-31" },
+    );
+
+    const sections = (result.body as Record<string, unknown>).sections as {
+      title: string;
+      rows: unknown[][];
+    }[];
+
+    const evolution = sections.find(
+      (section) => section.title === "Evolução mensal",
+    );
+    assert.ok(evolution);
+    assert.equal(evolution.rows.length, 3);
+  });
+
+  it("exports the net worth report with one header block per section", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService([
+      asset("ACCOUNT_BALANCES", 20000),
+      liability("LOAN_BALANCES", 10000),
+    ]);
+
+    const result = await new ReportController(reporting, service).export(
+      COMPANY_ID,
+      "net-worth",
+      { start: "2026-07-01", end: "2026-07-31" },
+    );
+
+    const csv = String(result.body);
+
+    assert.ok(csv.startsWith("Ativos\r\n"));
+    assert.ok(csv.includes("\r\n\r\nPassivos\r\n"));
+    assert.ok(csv.includes("Componente,"));
+  });
+
+  it("zeroes the net worth report for a company with no data", async () => {
+    const reporting = new FakeReportingRepository();
+    const service = fakeNetWorthService([]);
+
+    const result = await new ReportController(reporting, service).generate(
+      COMPANY_ID,
+      "net-worth",
+      { start: "2026-07-01", end: "2026-07-31" },
+    );
+
+    const sections = (result.body as Record<string, unknown>).sections as {
+      title: string;
+      rows: unknown[][];
+    }[];
+
+    assert.equal(sections[2]?.rows[0]?.at(-1), 0);
+  });
+
+  it("produces one line per investment plus totals and distribution", async () => {
+    const reporting = new FakeReportingRepository({
+      investments: INVESTMENT_ROWS,
+    });
+
+    const result = await new ReportController(reporting).generate(
+      COMPANY_ID,
+      "investments",
+      { start: "2026-07-01", end: "2026-07-31" },
+    );
+
+    const sections = (result.body as Record<string, unknown>).sections as {
+      title: string;
+      rows: unknown[][];
+    }[];
+
+    const positions = sections[0];
+    assert.ok(positions);
+    // Two investments plus the totals line.
+    assert.equal(positions.rows.length, 3);
+    assert.equal(positions.rows[0]?.[0], "Petrobras PN");
+
+    const totals = positions.rows[2];
+    assert.ok(totals);
+    assert.equal(totals[5], 4250);
+    assert.equal(totals[6], 4800);
+
+    const distribution = sections[1];
+    assert.ok(distribution);
+    assert.deepEqual(
+      distribution.rows.map((row) => row[0]),
+      ["STOCK", "REIT"],
+    );
+  });
+
+  it("flags the line of an investment without a quote", async () => {
+    const reporting = new FakeReportingRepository({
+      investments: INVESTMENT_ROWS,
+    });
+
+    const result = await new ReportController(reporting).generate(
+      COMPANY_ID,
+      "investments",
+      { start: "2026-07-01", end: "2026-07-31" },
+    );
+
+    const sections = (result.body as Record<string, unknown>).sections as {
+      rows: unknown[][];
+    }[];
+
+    const reit = sections[0]?.rows[1];
+    assert.ok(reit);
+    // Value falls back to the invested amount and the "com cotação" flag is no.
+    assert.equal(reit[5], 1000);
+    assert.equal(reit[6], 1000);
+    assert.equal(reit.at(-1), "não");
+  });
+
+  it("recomputes the totals over the filtered subset", async () => {
+    const reporting = new FakeReportingRepository({
+      investments: INVESTMENT_ROWS,
+    });
+
+    const result = await new ReportController(reporting).generate(
+      COMPANY_ID,
+      "investments",
+      {
+        start: "2026-07-01",
+        end: "2026-07-31",
+        investmentType: "STOCK",
+      },
+    );
+
+    const sections = (result.body as Record<string, unknown>).sections as {
+      rows: unknown[][];
+    }[];
+
+    const rows = sections[0]?.rows;
+    assert.ok(rows);
+    // One investment plus the totals line.
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1]?.[5], 3250);
+    assert.equal(rows[1]?.[6], 3800);
+  });
+
+  it("rejects an income tax period that is not a calendar year", async () => {
+    const reporting = new FakeReportingRepository();
+
+    const result = await new ReportController(reporting).generate(
+      COMPANY_ID,
+      "income-tax",
+      { start: "2026-01-01", end: "2026-06-30" },
+    );
+
+    assert.equal(result.statusCode, 400);
+    assert.match(
+      String((result.body as Record<string, unknown>).error),
+      /calendar year/,
+    );
+  });
+
+  it("produces the income tax report for a calendar year without computing tax", async () => {
+    const reporting = new FakeReportingRepository({
+      incomeTax: {
+        year: 2026,
+        positions: [
+          {
+            investmentId: "inv-1",
+            name: "Petrobras PN",
+            investmentType: "STOCK",
+            symbol: "PETR4",
+            currency: "BRL",
+            quantityAtYearEnd: 100,
+            costAtYearEnd: 3250,
+            quantityAtPreviousYearEnd: 50,
+            costAtPreviousYearEnd: 1500,
+          },
+        ],
+        incomeByInvestment: [
+          {
+            investmentId: "inv-1",
+            name: "Petrobras PN",
+            operationType: "DIVIDEND",
+            amount: 120,
+          },
+        ],
+        realizedResults: [
+          { investmentId: "inv-1", name: "Petrobras PN", amount: 250 },
+        ],
+        accountBalances: [
+          {
+            accountId: "acc-1",
+            name: "Conta Corrente",
+            currency: "BRL",
+            balance: 8000,
+          },
+        ],
+        loanBalances: [
+          {
+            loanId: "loan-1",
+            description: "Empréstimo",
+            currency: "BRL",
+            outstandingBalance: 6000,
+          },
+        ],
+      },
+    });
+
+    const result = await new ReportController(reporting).generate(
+      COMPANY_ID,
+      "income-tax",
+      { start: "2026-01-01", end: "2026-12-31" },
+    );
+
+    assert.equal(result.statusCode, 200);
+    const sections = (result.body as Record<string, unknown>).sections as {
+      title: string;
+      rows: unknown[][];
+    }[];
+
+    assert.equal(sections.length, 6);
+    assert.match(sections[0]?.title ?? "", /31\/12\/2026 e em 31\/12\/2025/);
+    assert.equal(sections[0]?.rows[0]?.[4], 100);
+    assert.equal(sections[0]?.rows[0]?.[6], 50);
+    assert.equal(sections[1]?.rows[0]?.[2], 120);
+    assert.equal(sections[2]?.rows[0]?.[1], 250);
+    assert.equal(sections[3]?.rows[0]?.[2], 8000);
+    assert.equal(sections[4]?.rows[0]?.[2], 6000);
+
+    // No tax amount anywhere, and the report says so.
+    assert.match(String(sections[5]?.rows[0]?.[0]), /não apura imposto devido/);
+  });
+
+  it("exports the income tax report with a header block per section", async () => {
+    const reporting = new FakeReportingRepository();
+
+    const result = await new ReportController(reporting).export(
+      COMPANY_ID,
+      "income-tax",
+      { start: "2026-01-01", end: "2026-12-31" },
+    );
+
+    const csv = String(result.body);
+
+    assert.ok(csv.includes("Proventos recebidos no ano"));
+    assert.ok(csv.includes("Resultados realizados no ano"));
+    assert.ok(csv.includes("Observação"));
   });
 });

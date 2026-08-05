@@ -10,6 +10,9 @@ const defaultExpenseCategories = [
   "Lazer",
   "Vestuário",
   "Assinaturas",
+  // Default expense category for investment purchases (Phase 4). The income
+  // side already existed; buying an asset needed its own identifiable line.
+  "Investimentos",
 ];
 
 const defaultIncomeCategories = ["Salário", "Bônus", "Investimentos", "Outros"];

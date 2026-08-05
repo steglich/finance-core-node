@@ -86,6 +86,10 @@ export interface TransactionProps {
   costCenterId?: string | undefined;
   /** Customer or supplier this transaction relates to (Phase 3, optional). */
   personId?: string | undefined;
+  /** Investment operation that created this transaction (Phase 4, optional). */
+  investmentOperationId?: string | undefined;
+  /** Loan installment payment or amortization that created it (Phase 4). */
+  loanInstallmentId?: string | undefined;
   createdAt?: Date;
 }
 
@@ -115,6 +119,8 @@ export interface CreateTransactionInput {
   invoiceId?: string | undefined;
   costCenterId?: string | undefined;
   personId?: string | undefined;
+  investmentOperationId?: string | undefined;
+  loanInstallmentId?: string | undefined;
 }
 
 /**
@@ -180,6 +186,8 @@ export class Transaction extends AggregateRoot<string> {
   private _invoiceId: string | undefined;
   private _costCenterId: string | undefined;
   private readonly _personId: string | undefined;
+  private readonly _investmentOperationId: string | undefined;
+  private readonly _loanInstallmentId: string | undefined;
   private _categoryId: string | undefined;
   private _status: TransactionStatus;
   private _grossAmount: Money;
@@ -263,6 +271,8 @@ export class Transaction extends AggregateRoot<string> {
     this._invoiceId = props.invoiceId;
     this._costCenterId = props.costCenterId;
     this._personId = props.personId;
+    this._investmentOperationId = props.investmentOperationId;
+    this._loanInstallmentId = props.loanInstallmentId;
 
     this.assertAmountsAreValid();
   }
@@ -355,8 +365,47 @@ export class Transaction extends AggregateRoot<string> {
     return this._currency;
   }
 
+  /**
+   * The rate applied at registration. Immutable: it is captured with the
+   * transaction and never re-read, so a past movement keeps the value it had
+   * (RN-07).
+   */
   get exchangeRate(): ExchangeRate | undefined {
     return this._exchangeRate;
+  }
+
+  /**
+   * The net amount expressed in the account's currency — what actually moves
+   * the balance. For a same-currency transaction it is the net amount itself;
+   * for a foreign-currency one it is the net amount converted by the rate
+   * stored with the transaction, never by today's rate.
+   */
+  netAmountInAccountCurrency(accountCurrency: string): Money {
+    const target = normalizeCurrency(accountCurrency);
+    if (target === this._currency) {
+      return this.netAmount;
+    }
+
+    const rate = this._exchangeRate;
+    if (!rate) {
+      throw DomainError.create(
+        "BUSINESS_RULE_VIOLATION",
+        `Transaction ${this.id} is in ${this._currency} on a ${target} account and carries no exchange rate (RN-07)`,
+      );
+    }
+
+    if (rate.supports(this._currency, target)) {
+      return rate.convert(this.netAmount);
+    }
+
+    if (rate.supports(target, this._currency)) {
+      return rate.invert().convert(this.netAmount);
+    }
+
+    throw DomainError.create(
+      "BUSINESS_RULE_VIOLATION",
+      `Exchange rate ${rate.sourceCurrency}/${rate.targetCurrency} does not cover ${this._currency}/${target} (RN-07)`,
+    );
   }
 
   get date(): Date {
@@ -412,6 +461,34 @@ export class Transaction extends AggregateRoot<string> {
 
   get invoiceId(): string | undefined {
     return this._invoiceId;
+  }
+
+  /**
+   * Investment operation that created this transaction. Set by the system, and
+   * the reason the transaction may not be edited, cancelled or refunded on its
+   * own: reverting it means reverting the operation (design, decision 10).
+   */
+  get investmentOperationId(): string | undefined {
+    return this._investmentOperationId;
+  }
+
+  /**
+   * Loan installment payment or extra amortization that created it, with the
+   * same ownership rule as `investmentOperationId`.
+   */
+  get loanInstallmentId(): string | undefined {
+    return this._loanInstallmentId;
+  }
+
+  /**
+   * True when the transaction belongs to a Phase 4 record rather than to the
+   * user who is looking at it.
+   */
+  get isOwnedByOrigin(): boolean {
+    return (
+      this._investmentOperationId !== undefined ||
+      this._loanInstallmentId !== undefined
+    );
   }
 
   /**
@@ -778,6 +855,8 @@ export class Transaction extends AggregateRoot<string> {
       invoiceId: this._invoiceId,
       costCenterId: this._costCenterId,
       personId: this._personId,
+      investmentOperationId: this._investmentOperationId,
+      loanInstallmentId: this._loanInstallmentId,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -849,6 +928,8 @@ export class Transaction extends AggregateRoot<string> {
         invoiceId: input.invoiceId,
         costCenterId: input.costCenterId,
         personId: input.personId,
+        investmentOperationId: input.investmentOperationId,
+        loanInstallmentId: input.loanInstallmentId,
       });
 
       transaction.raiseEvent(

@@ -23,6 +23,13 @@ import { KnexInvoiceRepository } from "./financeiro/infrastructure/knex-invoice-
 import { KnexBudgetRepository } from "./financeiro/infrastructure/knex-budget-repository.js";
 import { KnexGoalRepository } from "./financeiro/infrastructure/knex-goal-repository.js";
 import { KnexReportingRepository } from "./financeiro/infrastructure/knex-reporting-repository.js";
+import { KnexInvestmentRepository } from "./financeiro/infrastructure/knex-investment-repository.js";
+import { KnexInvestmentQuoteRepository } from "./financeiro/infrastructure/knex-investment-quote-repository.js";
+import { KnexExchangeRateRepository } from "./financeiro/infrastructure/knex-exchange-rate-repository.js";
+import { KnexLoanRepository } from "./financeiro/infrastructure/knex-loan-repository.js";
+import { KnexLoanInstallmentRepository } from "./financeiro/infrastructure/knex-loan-installment-repository.js";
+import { KnexNetWorthRepository } from "./financeiro/infrastructure/knex-net-worth-repository.js";
+import { KnexCrossCompanyRepository } from "./financeiro/infrastructure/knex-cross-company-repository.js";
 import { KnexPersonRepository } from "./cadastros/infrastructure/knex-person-repository.js";
 import { KnexCostCenterRepository } from "./cadastros/infrastructure/knex-cost-center-repository.js";
 import { KnexChargeRepository } from "./pagamentos/infrastructure/knex-charge-repository.js";
@@ -37,6 +44,11 @@ import { BudgetService } from "./financeiro/domain/budget-service.js";
 import { InvoiceAssignmentService } from "./financeiro/domain/invoice-assignment-service.js";
 import { InvoiceClosingService } from "./financeiro/domain/invoice-closing-service.js";
 import { InvoicePaymentService } from "./financeiro/domain/invoice-payment-service.js";
+import { InvestmentOperationService } from "./financeiro/domain/investment-operation-service.js";
+import { ExchangeService } from "./financeiro/domain/exchange-service.js";
+import { LoanPaymentService } from "./financeiro/domain/loan-payment-service.js";
+import { LoanAmortizationService } from "./financeiro/domain/loan-amortization-service.js";
+import { NetWorthService } from "./financeiro/domain/net-worth-service.js";
 import { DomainEventBus } from "./shared/domain/domain-event-bus.js";
 import { AccountController } from "./financeiro/api/account-controller.js";
 import { CategoryController } from "./financeiro/api/category-controller.js";
@@ -50,6 +62,10 @@ import { BudgetController } from "./financeiro/api/budget-controller.js";
 import { GoalController } from "./financeiro/api/goal-controller.js";
 import { DashboardController } from "./financeiro/api/dashboard-controller.js";
 import { ReportController } from "./financeiro/api/report-controller.js";
+import { InvestmentController } from "./financeiro/api/investment-controller.js";
+import { LoanController } from "./financeiro/api/loan-controller.js";
+import { NetWorthController } from "./financeiro/api/net-worth-controller.js";
+import { ExchangeRateController } from "./financeiro/api/exchange-rate-controller.js";
 import { PersonController } from "./cadastros/api/person-controller.js";
 import { CostCenterController } from "./cadastros/api/cost-center-controller.js";
 import { ChargeController } from "./pagamentos/api/charge-controller.js";
@@ -130,6 +146,18 @@ export class AppServer {
     const budgetRepository = new KnexBudgetRepository(knex);
     const goalRepository = new KnexGoalRepository(knex);
     const reportingRepository = new KnexReportingRepository(knex);
+    const investmentRepository = new KnexInvestmentRepository(knex);
+    const investmentQuoteRepository = new KnexInvestmentQuoteRepository(knex);
+    const exchangeRateRepository = new KnexExchangeRateRepository(knex);
+    const loanRepository = new KnexLoanRepository(knex);
+    const loanInstallmentRepository = new KnexLoanInstallmentRepository(knex);
+    const netWorthRepository = new KnexNetWorthRepository(knex);
+    // The only reader that crosses companies; it takes a userId, never a list
+    // of companies from the client (design, decision 12).
+    const crossCompanyRepository = new KnexCrossCompanyRepository(
+      knex,
+      netWorthRepository,
+    );
     const personRepository = new KnexPersonRepository(knex);
     const costCenterRepository = new KnexCostCenterRepository(knex);
     const chargeRepository = new KnexChargeRepository(knex);
@@ -150,6 +178,15 @@ export class AppServer {
     const invoicePaymentService = new InvoicePaymentService();
     const chargeReceiptService = new ChargeReceiptService();
     const payableSettlementService = new PayableSettlementService();
+    const investmentOperationService = new InvestmentOperationService();
+    const exchangeService = new ExchangeService(exchangeRateRepository);
+    const loanPaymentService = new LoanPaymentService();
+    const loanAmortizationService = new LoanAmortizationService();
+    const netWorthService = new NetWorthService(
+      netWorthRepository,
+      exchangeService,
+      crossCompanyRepository,
+    );
 
     // Bridges the registry context to the payments one without an import
     // between them: `cadastros` asks the question, the adapter answers it.
@@ -279,8 +316,38 @@ export class AppServer {
       accountRepository,
       eventBus,
     );
-    const dashboardController = new DashboardController(reportingRepository);
-    const reportController = new ReportController(reportingRepository);
+    const dashboardController = new DashboardController(
+      reportingRepository,
+      netWorthService,
+    );
+    const reportController = new ReportController(
+      reportingRepository,
+      netWorthService,
+    );
+    const investmentController = new InvestmentController(
+      investmentRepository,
+      investmentQuoteRepository,
+      accountRepository,
+      categoryRepository,
+      transactionRepository,
+      investmentOperationService,
+      eventBus,
+    );
+    const loanController = new LoanController(
+      loanRepository,
+      loanInstallmentRepository,
+      accountRepository,
+      personRepository,
+      transactionRepository,
+      loanPaymentService,
+      loanAmortizationService,
+      eventBus,
+    );
+    const netWorthController = new NetWorthController(netWorthService);
+    const exchangeRateController = new ExchangeRateController(
+      exchangeRateRepository,
+      eventBus,
+    );
 
     const personController = new PersonController(
       personRepository,
@@ -350,6 +417,10 @@ export class AppServer {
       goalController,
       dashboardController,
       reportController,
+      investmentController,
+      loanController,
+      netWorthController,
+      exchangeRateController,
       personController,
       costCenterController,
       ledgerController,

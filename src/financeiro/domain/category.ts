@@ -20,6 +20,9 @@ export const DEFAULT_EXPENSE_CATEGORIES = [
   "Lazer",
   "Vestuário",
   "Assinaturas",
+  // Purchases of investments are expenses in the cash sense; the category is
+  // separate so the DRE shows them on an identifiable line (Phase 4).
+  "Investimentos",
 ];
 
 export const DEFAULT_INCOME_CATEGORIES = [

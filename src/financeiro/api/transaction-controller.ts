@@ -47,6 +47,38 @@ export class TransactionController {
   ) {}
 
   /**
+   * A transaction created by an investment operation or by a loan payment is
+   * owned by that record: it is confirmed at creation and is reverted by
+   * reverting the operation, never on its own. The check reads the transaction's
+   * own columns — both sides live in `financeiro`, so no port is needed
+   * (design, decision 10).
+   */
+  private ensureNotOwnedByOrigin(
+    transaction: Transaction,
+    operation: "edited" | "cancelled" | "refunded",
+  ): ControllerResult | undefined {
+    if (transaction.investmentOperationId !== undefined) {
+      return {
+        statusCode: 400,
+        body: {
+          error: `Transactions created by an investment operation cannot be ${operation}; revert the operation on the investment instead`,
+        },
+      };
+    }
+
+    if (transaction.loanInstallmentId !== undefined) {
+      return {
+        statusCode: 400,
+        body: {
+          error: `Transactions created by a loan payment cannot be ${operation}; revert it on the loan instead`,
+        },
+      };
+    }
+
+    return undefined;
+  }
+
+  /**
    * Checks the Phase 3 classifications against the current company: the cost
    * center must exist and still be active, the person must exist. Returns the
    * error response to send, or undefined when both are fine.
@@ -289,6 +321,11 @@ export class TransactionController {
       return { statusCode: 404, body: { error: "Transaction not found" } };
     }
 
+    const owned = this.ensureNotOwnedByOrigin(transaction, "edited");
+    if (owned) {
+      return owned;
+    }
+
     // A transaction produced by settling a charge or a payable is a record of
     // something already settled: editing it would contradict the obligation.
     if (await this.settlementOrigin.isFromSettlement(companyId, transactionId)) {
@@ -409,6 +446,19 @@ export class TransactionController {
       return { statusCode: 404, body: { error: "Transaction not found" } };
     }
 
+    // Cancelling or refunding a transaction owned by an investment operation or
+    // a loan payment would leave that record pointing at a reverted movement.
+    // Reverting is done on the originating record instead (design, decision 10).
+    if (operation !== "confirm") {
+      const owned = this.ensureNotOwnedByOrigin(
+        transaction,
+        operation === "cancel" ? "cancelled" : "refunded",
+      );
+      if (owned) {
+        return owned;
+      }
+    }
+
     const account = await this.accountRepository.findById(
       companyId,
       transaction.accountId,
@@ -474,7 +524,9 @@ export class TransactionController {
           transactionId: transaction.id,
           accountId: account.id,
           direction,
-          amount: transaction.netAmount,
+          // The balance moves by the converted amount; the original amount and
+          // the rate stay on the transaction record (RN-07).
+          amount: transaction.netAmountInAccountCurrency(account.currency),
         },
         executor,
       );

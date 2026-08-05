@@ -30,6 +30,19 @@ import {
   type RegistrationRoutesDependencies,
 } from "./registration-routes.js";
 import {
+  createInvestmentRoutes,
+  type InvestmentRoutesDependencies,
+} from "./investment-routes.js";
+import {
+  createLoanRoutes,
+  type LoanRoutesDependencies,
+} from "./loan-routes.js";
+import {
+  createExchangeRateRoutes,
+  createNetWorthRoutes,
+  type NetWorthRoutesDependencies,
+} from "./net-worth-routes.js";
+import {
   createChargeRoutes,
   createPayableRoutes,
   createPixRoutes,
@@ -44,7 +57,10 @@ export const API_PREFIX = "/api/v1";
 export interface RouteDependencies
   extends Omit<FinanceRoutesDependencies, "authenticate">,
     Omit<RegistrationRoutesDependencies, "authenticate">,
-    Omit<PaymentRoutesDependencies, "authenticate"> {
+    Omit<PaymentRoutesDependencies, "authenticate">,
+    Omit<InvestmentRoutesDependencies, "authenticate">,
+    Omit<LoanRoutesDependencies, "authenticate">,
+    Omit<NetWorthRoutesDependencies, "authenticate"> {
   authController: AuthController;
   auditController: AuditController;
   requireAuditManage: preHandlerHookHandler;
@@ -106,6 +122,14 @@ export async function registerRoutes(
       await api.register(createGoalRoutes(deps), { prefix: "/goals" });
       await api.register(createDashboardRoutes(deps), { prefix: "/dashboard" });
       await api.register(createReportRoutes(deps), { prefix: "/reports" });
+      await api.register(createInvestmentRoutes(deps), {
+        prefix: "/investments",
+      });
+      await api.register(createLoanRoutes(deps), { prefix: "/loans" });
+      await api.register(createNetWorthRoutes(deps), { prefix: "/net-worth" });
+      await api.register(createExchangeRateRoutes(deps), {
+        prefix: "/exchange-rates",
+      });
 
       // cadastros
       await api.register(createPeopleRoutes(deps), { prefix: "/people" });

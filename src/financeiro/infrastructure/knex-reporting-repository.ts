@@ -8,6 +8,10 @@ import {
 } from "../../pagamentos/domain/charge-math.js";
 import type {
   BudgetSummary,
+  DebtSummary,
+  IncomeTaxData,
+  InvestmentReportRow,
+  InvestmentsSummary,
   CostCenterReportRow,
   PayablesSummary,
   ReceivableReportRow,
@@ -909,5 +913,365 @@ export class KnexReportingRepository implements ReportingRepository {
       amount: num(row.amount),
       percent: percentOf(num(row.amount), total),
     }));
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /* Phase 4: investments and debt                                             */
+  /* ------------------------------------------------------------------------ */
+
+  /**
+   * Aggregated position of every investment at a reference date, priced by the
+   * quote in force at it. Summed in SQL — the operations are never hydrated.
+   */
+  private investmentPositions(
+    companyId: string,
+    referenceDate: Date,
+    periodStart?: Date,
+  ): Knex.QueryBuilder {
+    const positions = this.knex("investment_operations as o")
+      .where("o.company_id", companyId)
+      .andWhere("o.operated_at", "<=", referenceDate)
+      .groupBy("o.investment_id")
+      .select("o.investment_id")
+      .select(
+        this.knex.raw(
+          `
+          coalesce(sum(case when o.operation_type = 'BUY' then o.quantity
+                            when o.operation_type = 'SELL' then -o.quantity
+                            else 0 end), 0) as quantity,
+          coalesce(sum(case when o.operation_type = 'BUY' then o.amount else 0 end), 0) as bought_amount,
+          coalesce(sum(case when o.operation_type = 'BUY' then o.quantity else 0 end), 0) as bought_quantity,
+          coalesce(sum(case when o.operation_type = 'SELL' then o.quantity else 0 end), 0) as sold_quantity,
+          coalesce(sum(case when o.operation_type = 'SELL' then o.amount else 0 end), 0) as sold_amount,
+          coalesce(sum(case when o.operation_type = 'SELL' and o.operated_at >= ? then o.quantity else 0 end), 0) as sold_quantity_period,
+          coalesce(sum(case when o.operation_type = 'SELL' and o.operated_at >= ? then o.amount else 0 end), 0) as sold_amount_period,
+          coalesce(sum(case when o.operation_type in ('DIVIDEND', 'INTEREST', 'AMORTIZATION') then o.amount else 0 end), 0) as income_received,
+          coalesce(sum(case when o.operation_type in ('DIVIDEND', 'INTEREST', 'AMORTIZATION') and o.operated_at >= ? then o.amount else 0 end), 0) as income_received_period
+        `,
+          [
+            periodStart ?? referenceDate,
+            periodStart ?? referenceDate,
+            periodStart ?? referenceDate,
+          ],
+        ),
+      )
+      .as("p");
+
+    const quotes = this.knex("investment_quotes")
+      .distinctOn("investment_id")
+      .where("quote_date", "<=", referenceDate)
+      .orderBy("investment_id")
+      .orderBy("quote_date", "desc")
+      .select("investment_id", "unit_price")
+      .as("q");
+
+    return this.knex("investments as i")
+      .join(positions, "p.investment_id", "i.id")
+      .leftJoin(quotes, "q.investment_id", "i.id")
+      .where("i.company_id", companyId)
+      .select(
+        "i.id",
+        "i.name",
+        "i.investment_type",
+        "i.symbol",
+        "i.currency",
+        "q.unit_price",
+        "p.quantity",
+        "p.bought_amount",
+        "p.bought_quantity",
+        "p.sold_quantity",
+        "p.sold_amount",
+        "p.sold_quantity_period",
+        "p.sold_amount_period",
+        "p.income_received",
+        "p.income_received_period",
+      );
+  }
+
+  /**
+   * Turns one aggregated row into the derived figures.
+   *
+   * Because the cost policy is average — not FIFO — the average cost of what
+   * remains is the average cost of everything bought, so the invested amount and
+   * the realized result both follow from it without replaying the operations.
+   */
+  private investmentLine(row: Record<string, unknown>): InvestmentReportRow {
+    const quantity = num(row.quantity);
+    const boughtQuantity = num(row.bought_quantity);
+    const boughtAmount = num(row.bought_amount);
+    const averageCost = boughtQuantity > 0 ? boughtAmount / boughtQuantity : 0;
+
+    const investedAmount = quantity > 0 ? round2(averageCost * quantity) : 0;
+    const realizedResultInPeriod = round2(
+      num(row.sold_amount_period) - averageCost * num(row.sold_quantity_period),
+    );
+    const realizedResultTotal = round2(
+      num(row.sold_amount) - averageCost * num(row.sold_quantity),
+    );
+    const incomeReceivedInPeriod = round2(num(row.income_received_period));
+    const incomeReceivedTotal = round2(num(row.income_received));
+
+    const unitPrice =
+      row.unit_price === null || row.unit_price === undefined
+        ? undefined
+        : num(row.unit_price);
+    const quoted = unitPrice !== undefined && unitPrice > 0;
+
+    // Without a quote the value falls back to the cost, and the line says so —
+    // zero would erase real wealth and an error would break the dashboard.
+    const currentValue = quoted
+      ? round2(quantity * unitPrice)
+      : investedAmount;
+
+    const profitabilityPercent =
+      investedAmount === 0
+        ? 0
+        : round2(
+            ((currentValue +
+              realizedResultTotal +
+              incomeReceivedTotal -
+              investedAmount) /
+              investedAmount) *
+              100,
+          );
+
+    return {
+      investmentId: row.id as string,
+      name: row.name as string,
+      investmentType: row.investment_type as string,
+      symbol: (row.symbol as string | null) ?? undefined,
+      currency: row.currency as string,
+      quantity,
+      averageCost: round2(averageCost),
+      investedAmount,
+      currentValue,
+      unrealizedResult: round2(currentValue - investedAmount),
+      realizedResultInPeriod,
+      incomeReceivedInPeriod,
+      profitabilityPercent,
+      quoted,
+    };
+  }
+
+  async investmentsReport(
+    scope: ReportingScope,
+    investmentType?: string,
+  ): Promise<InvestmentReportRow[]> {
+    const query = this.investmentPositions(
+      scope.companyId,
+      scope.end,
+      scope.start,
+    ).orderBy("i.name", "asc");
+
+    if (investmentType) {
+      query.andWhere("i.investment_type", investmentType);
+    }
+    if (scope.accountIds && scope.accountIds.length > 0) {
+      query.whereIn("i.account_id", [...scope.accountIds]);
+    }
+
+    const rows = (await query) as Record<string, unknown>[];
+
+    return rows.map((row) => this.investmentLine(row));
+  }
+
+  async investmentsSummary(scope: ReportingScope): Promise<InvestmentsSummary> {
+    const lines = await this.investmentsReport(scope);
+    const currency = lines[0]?.currency ?? DEFAULT_CURRENCY;
+
+    const totals = lines.reduce(
+      (accumulator, line) => ({
+        investedAmount: accumulator.investedAmount + line.investedAmount,
+        currentValue: accumulator.currentValue + line.currentValue,
+        realizedResult:
+          accumulator.realizedResult + line.realizedResultInPeriod,
+        incomeReceived:
+          accumulator.incomeReceived + line.incomeReceivedInPeriod,
+      }),
+      {
+        investedAmount: 0,
+        currentValue: 0,
+        realizedResult: 0,
+        incomeReceived: 0,
+      },
+    );
+
+    const investedAmount = round2(totals.investedAmount);
+    const currentValue = round2(totals.currentValue);
+
+    const byType = new Map<string, number>();
+    for (const line of lines) {
+      byType.set(
+        line.investmentType,
+        round2((byType.get(line.investmentType) ?? 0) + line.currentValue),
+      );
+    }
+
+    return {
+      investedAmount,
+      currentValue,
+      unrealizedResult: round2(currentValue - investedAmount),
+      realizedResult: round2(totals.realizedResult),
+      incomeReceived: round2(totals.incomeReceived),
+      profitabilityPercent:
+        investedAmount === 0
+          ? 0
+          : round2(((currentValue - investedAmount) / investedAmount) * 100),
+      // The total is only as trustworthy as its least quoted line.
+      quoted: lines.every((line) => line.quoted),
+      distributionByType: [...byType.entries()].map(([type, value]) => ({
+        investmentType: type,
+        currentValue: value,
+        sharePercent: percentOf(value, currentValue),
+      })),
+      currency,
+    };
+  }
+
+  async debtSummary(scope: ReportingScope): Promise<DebtSummary> {
+    // The outstanding balance is the sum of the principal portions still open,
+    // exactly what `Loan.balanceFrom` derives in the domain.
+    const open = (await this.knex("loan_installments as li")
+      .join("loans as l", "l.id", "li.loan_id")
+      .where("l.company_id", scope.companyId)
+      .whereNot("l.status", "SETTLED")
+      .whereNot("li.status", "PAID")
+      .first(
+        this.knex.raw(
+          `coalesce(sum(li.principal_amount), 0) as outstanding,
+           coalesce(sum(case when li.due_date between ? and ? then li.amount else 0 end), 0) as due_in_period,
+           coalesce(sum(case when li.status = 'OVERDUE' then li.amount else 0 end), 0) as overdue_amount,
+           count(case when li.status = 'OVERDUE' then 1 end) as overdue_count,
+           min(l.currency) as currency`,
+          [scope.start, scope.end],
+        ),
+      )) as Record<string, unknown> | undefined;
+
+    return {
+      outstandingBalance: round2(num(open?.outstanding)),
+      dueInPeriod: round2(num(open?.due_in_period)),
+      overdueAmount: round2(num(open?.overdue_amount)),
+      overdueCount: Number(open?.overdue_count ?? 0),
+      currency: (open?.currency as string | null) ?? DEFAULT_CURRENCY,
+    };
+  }
+
+  /**
+   * The raw figures of the income tax report. No tax is computed: the report
+   * hands over consolidated data for the taxpayer to file.
+   */
+  async incomeTaxData(companyId: string, year: number): Promise<IncomeTaxData> {
+    const yearEnd = new Date(Date.UTC(year, 11, 31));
+    const previousYearEnd = new Date(Date.UTC(year - 1, 11, 31));
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+
+    const scope: ReportingScope = {
+      companyId,
+      start: yearStart,
+      end: yearEnd,
+    };
+
+    const [current, previous] = await Promise.all([
+      this.investmentsReport(scope),
+      this.investmentsReport({
+        companyId,
+        start: new Date(Date.UTC(year - 1, 0, 1)),
+        end: previousYearEnd,
+      }),
+    ]);
+
+    const previousById = new Map(
+      previous.map((line) => [line.investmentId, line]),
+    );
+
+    const incomeRows = (await this.knex("investment_operations as o")
+      .join("investments as i", "i.id", "o.investment_id")
+      .where("o.company_id", companyId)
+      .whereIn("o.operation_type", ["DIVIDEND", "INTEREST", "AMORTIZATION"])
+      .andWhere("o.operated_at", ">=", yearStart)
+      .andWhere("o.operated_at", "<=", yearEnd)
+      .groupBy("i.id", "i.name", "o.operation_type")
+      .orderBy("i.name", "asc")
+      .select("i.id", "i.name", "o.operation_type")
+      .sum({ amount: "o.amount" })) as Record<string, unknown>[];
+
+    const accountRows = (await this.knex("accounts as a")
+      .where("a.company_id", companyId)
+      .andWhere("a.is_active", true)
+      .leftJoin("transactions as t", function () {
+        this.on("t.account_id", "=", "a.id");
+      })
+      .groupBy("a.id", "a.name", "a.currency")
+      .orderBy("a.name", "asc")
+      .select("a.id", "a.name", "a.currency")
+      .select(
+        this.knex.raw(
+          `coalesce(sum(case
+             when t.status = 'CONFIRMED' and t.date <= ? and t.invoice_id is null
+               then (case when t.type = 'INCOME' then 1 else -1 end) * t.net_amount
+             else 0 end), 0) as balance`,
+          [yearEnd],
+        ),
+      )) as Record<string, unknown>[];
+
+    const loanRows = (await this.knex("loan_installments as li")
+      .join("loans as l", "l.id", "li.loan_id")
+      .where("l.company_id", companyId)
+      .whereNot("l.status", "SETTLED")
+      .andWhere((builder) => {
+        builder
+          .whereNot("li.status", "PAID")
+          .orWhere("li.paid_at", ">", yearEnd);
+      })
+      .groupBy("l.id", "l.description", "l.currency")
+      .orderBy("l.description", "asc")
+      .select("l.id", "l.description", "l.currency")
+      .sum({ outstanding: "li.principal_amount" })) as Record<
+      string,
+      unknown
+    >[];
+
+    return {
+      year,
+      positions: current.map((line) => {
+        const before = previousById.get(line.investmentId);
+        return {
+          investmentId: line.investmentId,
+          name: line.name,
+          investmentType: line.investmentType,
+          symbol: line.symbol,
+          currency: line.currency,
+          quantityAtYearEnd: line.quantity,
+          costAtYearEnd: line.investedAmount,
+          quantityAtPreviousYearEnd: before?.quantity ?? 0,
+          costAtPreviousYearEnd: before?.investedAmount ?? 0,
+        };
+      }),
+      incomeByInvestment: incomeRows.map((row) => ({
+        investmentId: row.id as string,
+        name: row.name as string,
+        operationType: row.operation_type as string,
+        amount: round2(num(row.amount)),
+      })),
+      realizedResults: current
+        .filter((line) => line.realizedResultInPeriod !== 0)
+        .map((line) => ({
+          investmentId: line.investmentId,
+          name: line.name,
+          amount: line.realizedResultInPeriod,
+        })),
+      accountBalances: accountRows.map((row) => ({
+        accountId: row.id as string,
+        name: row.name as string,
+        currency: row.currency as string,
+        balance: round2(num(row.balance)),
+      })),
+      loanBalances: loanRows.map((row) => ({
+        loanId: row.id as string,
+        description: row.description as string,
+        currency: row.currency as string,
+        outstandingBalance: round2(num(row.outstanding)),
+      })),
+    };
   }
 }

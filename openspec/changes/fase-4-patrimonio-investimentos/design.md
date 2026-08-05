@@ -72,7 +72,9 @@ As Fases 1, 2 e 3 estão implementadas e arquivadas. O projeto já tem: `shared/
 
 ### 5. Empréstimo: status persistido, saldo devedor derivado, parcelas materializadas na contratação
 
-**Decisão:** `Loan` guarda `status` (CONTRACTED/IN_PROGRESS/DELINQUENT/SETTLED) e os termos do contrato; as parcelas são **geradas e gravadas** na contratação, cada uma com `interest_amount` e `principal_amount` congelados. O saldo devedor é `principal − Σ principal_amount das parcelas liquidadas − Σ amortizações extras`, calculado em SQL.
+**Decisão:** `Loan` guarda `status` (CONTRACTED/IN_PROGRESS/DELINQUENT/SETTLED) e os termos do contrato; as parcelas são **geradas e gravadas** na contratação, cada uma com `interest_amount` e `principal_amount` congelados. O saldo devedor é a **soma dos `principal_amount` das parcelas ainda em aberto**, calculada em SQL.
+
+**Correção feita na implementação:** a fórmula original — `principal − Σ principal pago − Σ amortizações extras` — conta a amortização extra duas vezes, porque a amortização *quita parcelas* (cujo principal entra na primeira soma) **e** reduz o principal da parcela que ela cobre só em parte. Somar o que resta em aberto é aritmeticamente equivalente quando não há amortização extra e continua correto quando há, sem precisar de um segundo termo. Continua derivado, nunca persistido. Coberto por `loan.test.ts` e por `net-worth.integration.test.ts`.
 
 **Racional:** o status é uma máquina de estados documentada com transições que dependem de eventos externos (atraso), então é estado de verdade, não derivação — igual a `Charge` e `Invoice`. Já a tabela de amortização é determinística a partir do contrato, mas é materializada porque as parcelas são **entidades com identidade e situação própria** (pendente/paga/vencida), exatamente como as parcelas da Fase 1.
 
@@ -161,6 +163,8 @@ O saldo de conta **a uma data passada** é `sum(entries confirmadas com date <= 
 - Índice `transactions(company_id, account_id, status, date)` se ainda não existir, exigido pela reconstrução de saldo a uma data (decisão 11)
 
 **Racional:** `decimal(15,2)` para dinheiro segue as tabelas existentes; `decimal(20,8)` para quantidade e preço unitário porque cripto tem oito casas e uma fração de ação não cabe em duas. O `down()` na ordem inversa, como nas migrations anteriores.
+
+**Consequência descoberta na implementação:** `transactions.investment_operation_id` e `investment_operations.transaction_id` se referenciam mutuamente, então a escrita da operação tem três passos dentro do mesmo `runAtomic`: grava a operação sem o vínculo, grava a transação (cuja FK já resolve) e fecha o vínculo com `linkOperationTransaction`. Nenhum estado intermediário é observável fora da transação de banco. Foi um teste de integração que expôs isso — a ordem "transação primeiro" viola a FK.
 
 **Seeds:** `02_default_categories.ts` ganha a categoria de **despesa** "Investimentos" (hoje só existe a de receita), usada como padrão nas compras. Alterar o seed não afeta empresas já criadas — para elas, a categoria é escolhida no cadastro do investimento.
 

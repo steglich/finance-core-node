@@ -10,6 +10,9 @@ import { KnexInvoiceRepository } from "./financeiro/infrastructure/knex-invoice-
 import { KnexBudgetRepository } from "./financeiro/infrastructure/knex-budget-repository.js";
 import { KnexChargeRepository } from "./pagamentos/infrastructure/knex-charge-repository.js";
 import { KnexPayableRepository } from "./pagamentos/infrastructure/knex-payable-repository.js";
+import { KnexLoanRepository } from "./financeiro/infrastructure/knex-loan-repository.js";
+import { KnexLoanInstallmentRepository } from "./financeiro/infrastructure/knex-loan-installment-repository.js";
+import { LoanPaymentMissed } from "./financeiro/domain/loan-events.js";
 import { InvoiceClosingService } from "./financeiro/domain/invoice-closing-service.js";
 import { KnexAuditRepository, KnexDomainEventLogRepository } from "./auditoria/infrastructure/knex-audit-repository.js";
 import { registerAuditHandlers } from "./auditoria/infrastructure/audit-event-handlers.js";
@@ -26,7 +29,8 @@ import { createLogger } from "./shared/infrastructure/logger.js";
  * 4. flags overdue invoices;
  * 5. closes the budget periods that have ended;
  * 6. flags overdue charges;
- * 7. flags overdue payables.
+ * 7. flags overdue payables;
+ * 8. flags overdue loan installments and marks their loans delinquent.
  *
  * Every pass is idempotent through the aggregates' own state machines: a second
  * run on the same day finds the state already advanced, fails harmlessly and
@@ -47,6 +51,8 @@ async function run(referenceDate: Date): Promise<void> {
   const budgetRepository = new KnexBudgetRepository(knex);
   const chargeRepository = new KnexChargeRepository(knex);
   const payableRepository = new KnexPayableRepository(knex);
+  const loanRepository = new KnexLoanRepository(knex);
+  const loanInstallmentRepository = new KnexLoanInstallmentRepository(knex);
   const auditRepository = new KnexAuditRepository(knex);
   const eventLogRepository = new KnexDomainEventLogRepository(knex);
 
@@ -293,6 +299,64 @@ async function run(referenceDate: Date): Promise<void> {
       }
     }
 
+    // Loan installments follow the same shape as charges and payables: the
+    // installment refuses a second transition to Overdue and the status-guarded
+    // UPDATE refuses a row another process already moved, so a re-run on the
+    // same day transitions nothing and publishes nothing. Settled loans are
+    // filtered out by the query itself.
+    let overdueLoanInstallments = 0;
+
+    for (const installment of await loanInstallmentRepository.findOverdueCandidates(
+      referenceDate,
+    )) {
+      const result = installment.markOverdue(referenceDate);
+      if (result.isFailure) {
+        continue;
+      }
+
+      try {
+        const loan = await loanRepository.findById(
+          installment.companyId,
+          installment.loanId,
+        );
+        if (!loan) {
+          continue;
+        }
+
+        // A loan already delinquent stays delinquent: the transition fails
+        // harmlessly and only the installment moves.
+        const delinquent = loan.markDelinquent();
+
+        await transactionRepository.runAtomic(async (executor) => {
+          await loanInstallmentRepository.update(installment, executor);
+          if (delinquent.isSuccess) {
+            await loanRepository.update(loan, executor);
+          }
+        });
+
+        eventBus.publish(
+          new LoanPaymentMissed(
+            loan.id,
+            loan.companyId,
+            installment.id,
+            installment.number,
+            installment.dueDate,
+            installment.daysLateAt(referenceDate),
+            installment.amount,
+          ),
+        );
+        for (const event of loan.events) {
+          eventBus.publish(event);
+        }
+        loan.clearEvents();
+        overdueLoanInstallments += 1;
+      } catch (error) {
+        logger.error(
+          `Failed to flag loan installment ${installment.id} as overdue: ${String(error)}`,
+        );
+      }
+    }
+
     logger.info("Scheduler pass complete", {
       generatedTransactions: generated,
       overdueInstallments: overdue,
@@ -301,6 +365,7 @@ async function run(referenceDate: Date): Promise<void> {
       closedBudgets,
       overdueCharges,
       overduePayables,
+      overdueLoanInstallments,
     });
   } finally {
     await database.close();

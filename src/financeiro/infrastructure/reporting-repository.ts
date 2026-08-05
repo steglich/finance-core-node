@@ -158,6 +158,92 @@ export interface CardSummaryRow {
 }
 
 /**
+ * Phase 4 dashboard summary of the investment portfolio at the reference date.
+ */
+export interface InvestmentsSummary {
+  investedAmount: number;
+  currentValue: number;
+  unrealizedResult: number;
+  realizedResult: number;
+  incomeReceived: number;
+  profitabilityPercent: number;
+  /** False when at least one investment could not be quoted. */
+  quoted: boolean;
+  distributionByType: {
+    investmentType: string;
+    currentValue: number;
+    sharePercent: number;
+  }[];
+  currency: string;
+}
+
+/**
+ * Phase 4 dashboard summary of what the company owes on its loans.
+ */
+export interface DebtSummary {
+  /** Outstanding balance of the loans that are not settled. */
+  outstandingBalance: number;
+  /** Installments falling due inside the period. */
+  dueInPeriod: number;
+  overdueAmount: number;
+  overdueCount: number;
+  currency: string;
+}
+
+/**
+ * One line of the investments report: the position priced at the reference date
+ * plus the results the period produced.
+ */
+export interface InvestmentReportRow {
+  investmentId: string;
+  name: string;
+  investmentType: string;
+  symbol?: string | undefined;
+  currency: string;
+  quantity: number;
+  averageCost: number;
+  investedAmount: number;
+  currentValue: number;
+  unrealizedResult: number;
+  /** Realized inside the period, not since inception. */
+  realizedResultInPeriod: number;
+  incomeReceivedInPeriod: number;
+  profitabilityPercent: number;
+  quoted: boolean;
+}
+
+/**
+ * The raw figures the income tax report presents. No tax is computed here.
+ */
+export interface IncomeTaxData {
+  year: number;
+  positions: {
+    investmentId: string;
+    name: string;
+    investmentType: string;
+    symbol?: string | undefined;
+    currency: string;
+    quantityAtYearEnd: number;
+    costAtYearEnd: number;
+    quantityAtPreviousYearEnd: number;
+    costAtPreviousYearEnd: number;
+  }[];
+  incomeByInvestment: {
+    investmentId: string;
+    name: string;
+    operationType: string;
+    amount: number;
+  }[];
+  realizedResults: {
+    investmentId: string;
+    name: string;
+    amount: number;
+  }[];
+  accountBalances: { accountId: string; name: string; currency: string; balance: number }[];
+  loanBalances: { loanId: string; description: string; currency: string; outstandingBalance: number }[];
+}
+
+/**
  * Aggregated reads backing the dashboard and the reports.
  */
 export interface ReportingRepository {
@@ -212,4 +298,27 @@ export interface ReportingRepository {
    * Payables falling due inside the period.
    */
   payables(scope: ReportingScope): Promise<ReceivableReportRow[]>;
+
+  /**
+   * The investment portfolio at the end of the period.
+   */
+  investmentsSummary(scope: ReportingScope): Promise<InvestmentsSummary>;
+
+  /**
+   * What the company owes on its loans at the end of the period.
+   */
+  debtSummary(scope: ReportingScope): Promise<DebtSummary>;
+
+  /**
+   * One line per investment, optionally restricted to a type.
+   */
+  investmentsReport(
+    scope: ReportingScope,
+    investmentType?: string,
+  ): Promise<InvestmentReportRow[]>;
+
+  /**
+   * The raw data of the income tax report for a calendar year.
+   */
+  incomeTaxData(companyId: string, year: number): Promise<IncomeTaxData>;
 }

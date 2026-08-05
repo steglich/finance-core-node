@@ -79,12 +79,26 @@ export const PHASE_3_EVENT_TYPES = [
 ] as const;
 
 /**
+ * Domain events added by Phase 4: investments, loans and exchange rates.
+ */
+export const PHASE_4_EVENT_TYPES = [
+  "InvestmentCreated",
+  "InvestmentOperationRegistered",
+  "InvestmentClosed",
+  "LoanCreated",
+  "LoanSettled",
+  "LoanPaymentMissed",
+  "ExchangeRateRegistered",
+] as const;
+
+/**
  * Every event the audit trail mirrors.
  */
 export const AUDITED_EVENT_TYPES = [
   ...PHASE_1_EVENT_TYPES,
   ...PHASE_2_EVENT_TYPES,
   ...PHASE_3_EVENT_TYPES,
+  ...PHASE_4_EVENT_TYPES,
 ] as const;
 
 /**
@@ -152,6 +166,19 @@ const AUDITED_EVENTS: Readonly<
   PayablePaid: { entityType: "Payable", operation: "STATUS_CHANGE" },
   PayableOverdue: { entityType: "Payable", operation: "STATUS_CHANGE" },
   PayableCancelled: { entityType: "Payable", operation: "STATUS_CHANGE" },
+  InvestmentCreated: { entityType: "Investment", operation: "CREATE" },
+  InvestmentOperationRegistered: {
+    entityType: "Investment",
+    operation: "UPDATE",
+  },
+  InvestmentClosed: { entityType: "Investment", operation: "STATUS_CHANGE" },
+  LoanCreated: { entityType: "Loan", operation: "CREATE" },
+  LoanSettled: { entityType: "Loan", operation: "STATUS_CHANGE" },
+  LoanPaymentMissed: { entityType: "Loan", operation: "STATUS_CHANGE" },
+  ExchangeRateRegistered: {
+    entityType: "ExchangeRate",
+    operation: "CREATE",
+  },
 };
 
 /**

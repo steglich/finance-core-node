@@ -308,6 +308,15 @@ export function validateCreateTransactionRequest(
   const accountId = requiredString(b, "accountId");
   if (!accountId) return invalid("accountId is required (RN-03)");
 
+  // The origin of a transaction is set by the system, never by the client: a
+  // user-registered transaction is not owned by an investment or a loan.
+  if (b.investmentOperationId !== undefined) {
+    return invalid("investmentOperationId is set by the system, not by the client");
+  }
+  if (b.loanInstallmentId !== undefined) {
+    return invalid("loanInstallmentId is set by the system, not by the client");
+  }
+
   const type = oneOf(b.type, TRANSACTION_TYPES);
   if (!type) {
     return invalid(`type must be one of ${TRANSACTION_TYPES.join(", ")}`);
@@ -1341,6 +1350,8 @@ export interface DashboardQuery {
   end: Date;
   accountIds?: string[] | undefined;
   costCenterIds?: string[] | undefined;
+  /** Currency the figures are expressed in; defaults to the company's. */
+  displayCurrency?: string | undefined;
 }
 
 export function validateDashboardQuery(
@@ -1375,9 +1386,22 @@ export function validateDashboardQuery(
     return invalid("start must not be later than end");
   }
 
+  const displayCurrency = optionalString(q, "displayCurrency");
+  if (displayCurrency === null) {
+    return invalid("displayCurrency must be a string");
+  }
+
   return {
     success: true,
-    data: { start: period.start, end: period.end, accountIds, costCenterIds },
+    data: {
+      start: period.start,
+      end: period.end,
+      accountIds,
+      costCenterIds,
+      displayCurrency: displayCurrency
+        ? displayCurrency.toUpperCase()
+        : undefined,
+    },
   };
 }
 
@@ -1390,6 +1414,9 @@ export const REPORT_TYPES = [
   "by-cost-center",
   "receivables",
   "payables",
+  "net-worth",
+  "investments",
+  "income-tax",
 ] as const;
 
 export type ReportType = (typeof REPORT_TYPES)[number];
@@ -1404,6 +1431,9 @@ export interface ReportQuery {
   personId?: string | undefined;
   categoryId?: string | undefined;
   status?: string | undefined;
+  displayCurrency?: string | undefined;
+  /** Filter of the investments report. */
+  investmentType?: string | undefined;
 }
 
 export function validateReportQuery(
@@ -1429,10 +1459,654 @@ export function validateReportQuery(
       end: period.data.end,
       accountIds: period.data.accountIds,
       costCenterIds: period.data.costCenterIds,
+      displayCurrency: period.data.displayCurrency,
+      investmentType:
+        optionalString(asObject(query) ?? {}, "investmentType") || undefined,
       personId: optionalString(asObject(query) ?? {}, "personId") || undefined,
       categoryId:
         optionalString(asObject(query) ?? {}, "categoryId") || undefined,
       status: optionalString(asObject(query) ?? {}, "status") || undefined,
+    },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Investments                                                                 */
+/* -------------------------------------------------------------------------- */
+
+const INVESTMENT_TYPES = [
+  "STOCK",
+  "REIT",
+  "TREASURY",
+  "CD",
+  "CRYPTO",
+  "ETF",
+  "FUND",
+  "PENSION",
+] as const;
+
+const INVESTMENT_STATUSES = ["ACTIVE", "CLOSED"] as const;
+
+const OPERATION_TYPES = [
+  "BUY",
+  "SELL",
+  "DIVIDEND",
+  "INTEREST",
+  "AMORTIZATION",
+] as const;
+
+export interface CreateInvestmentRequest {
+  accountId: string;
+  name: string;
+  investmentType: (typeof INVESTMENT_TYPES)[number];
+  symbol?: string | undefined;
+  currency?: string | undefined;
+  expenseCategoryId: string;
+  incomeCategoryId: string;
+}
+
+export function validateCreateInvestmentRequest(
+  body: unknown,
+): ApiResult<CreateInvestmentRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const accountId = requiredString(b, "accountId");
+  if (!accountId) return invalid("accountId is required");
+
+  const name = requiredString(b, "name");
+  if (!name) return invalid("name is required");
+
+  const investmentType = oneOf(b.investmentType, INVESTMENT_TYPES);
+  if (!investmentType) {
+    return invalid(`investmentType must be one of ${INVESTMENT_TYPES.join(", ")}`);
+  }
+
+  const expenseCategoryId = requiredString(b, "expenseCategoryId");
+  if (!expenseCategoryId) return invalid("expenseCategoryId is required");
+
+  const incomeCategoryId = requiredString(b, "incomeCategoryId");
+  if (!incomeCategoryId) return invalid("incomeCategoryId is required");
+
+  const symbol = optionalString(b, "symbol");
+  if (symbol === null) return invalid("symbol must be a string");
+
+  const currency = optionalString(b, "currency");
+  if (currency === null) return invalid("currency must be a string");
+
+  return {
+    success: true,
+    data: {
+      accountId,
+      name,
+      investmentType,
+      symbol: symbol || undefined,
+      currency: currency || undefined,
+      expenseCategoryId,
+      incomeCategoryId,
+    },
+  };
+}
+
+export interface UpdateInvestmentRequest {
+  name?: string | undefined;
+  symbol?: string | null | undefined;
+  expenseCategoryId?: string | undefined;
+  incomeCategoryId?: string | undefined;
+}
+
+export function validateUpdateInvestmentRequest(
+  body: unknown,
+): ApiResult<UpdateInvestmentRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const name = optionalString(b, "name");
+  if (name === null) return invalid("name must be a string");
+  if (name !== undefined && name.length === 0) {
+    return invalid("name must not be empty");
+  }
+
+  // An explicit null clears the symbol; absent leaves it untouched.
+  const symbol =
+    b.symbol === null ? null : optionalString(b, "symbol");
+  if (symbol === null && b.symbol !== null) {
+    return invalid("symbol must be a string");
+  }
+
+  const expenseCategoryId = optionalString(b, "expenseCategoryId");
+  if (expenseCategoryId === null) {
+    return invalid("expenseCategoryId must be a string");
+  }
+
+  const incomeCategoryId = optionalString(b, "incomeCategoryId");
+  if (incomeCategoryId === null) {
+    return invalid("incomeCategoryId must be a string");
+  }
+
+  return {
+    success: true,
+    data: {
+      name,
+      symbol,
+      expenseCategoryId: expenseCategoryId || undefined,
+      incomeCategoryId: incomeCategoryId || undefined,
+    },
+  };
+}
+
+export interface InvestmentOperationRequest {
+  operationType: (typeof OPERATION_TYPES)[number];
+  quantity?: number | undefined;
+  unitPrice?: number | undefined;
+  fees?: number | undefined;
+  amount?: number | undefined;
+  operatedAt: Date;
+  categoryId?: string | undefined;
+  costCenterId?: string | undefined;
+  description?: string | undefined;
+  notes?: string | undefined;
+}
+
+export function validateInvestmentOperationRequest(
+  body: unknown,
+): ApiResult<InvestmentOperationRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const operationType = oneOf(b.operationType, OPERATION_TYPES);
+  if (!operationType) {
+    return invalid(`operationType must be one of ${OPERATION_TYPES.join(", ")}`);
+  }
+
+  const operatedAt = parseDate(b.operatedAt);
+  if (operatedAt === null) return invalid("operatedAt must be an ISO date");
+  if (operatedAt === undefined) return invalid("operatedAt is required");
+
+  const quantity = optionalNumber(b, "quantity");
+  if (quantity === null) return invalid("quantity must be a number");
+
+  const unitPrice = optionalNumber(b, "unitPrice");
+  if (unitPrice === null) return invalid("unitPrice must be a number");
+
+  const fees = optionalNumber(b, "fees");
+  if (fees === null) return invalid("fees must be a number");
+
+  const amount = optionalNumber(b, "amount");
+  if (amount === null) return invalid("amount must be a number");
+
+  // A quantity-bearing operation derives its amount; the others need one.
+  if (operationType === "BUY" || operationType === "SELL") {
+    if (quantity === undefined || quantity <= 0) {
+      return invalid("quantity is required and must be greater than zero");
+    }
+    if (unitPrice === undefined || unitPrice <= 0) {
+      return invalid("unitPrice is required and must be greater than zero");
+    }
+  } else if (amount === undefined || amount <= 0) {
+    return invalid("amount is required and must be greater than zero");
+  }
+
+  const categoryId = optionalString(b, "categoryId");
+  if (categoryId === null) return invalid("categoryId must be a string");
+
+  const costCenterId = optionalString(b, "costCenterId");
+  if (costCenterId === null) return invalid("costCenterId must be a string");
+
+  const description = optionalString(b, "description");
+  if (description === null) return invalid("description must be a string");
+
+  const notes = optionalString(b, "notes");
+  if (notes === null) return invalid("notes must be a string");
+
+  return {
+    success: true,
+    data: {
+      operationType,
+      quantity,
+      unitPrice,
+      fees,
+      amount,
+      operatedAt,
+      categoryId: categoryId || undefined,
+      costCenterId: costCenterId || undefined,
+      description: description || undefined,
+      notes: notes || undefined,
+    },
+  };
+}
+
+export interface InvestmentQuoteRequest {
+  unitPrice: number;
+  quoteDate: Date;
+  source?: string | undefined;
+}
+
+export function validateInvestmentQuoteRequest(
+  body: unknown,
+): ApiResult<InvestmentQuoteRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const unitPrice = optionalNumber(b, "unitPrice");
+  if (unitPrice === null || unitPrice === undefined) {
+    return invalid("unitPrice is required and must be a number");
+  }
+  if (unitPrice <= 0) return invalid("unitPrice must be greater than zero");
+
+  const quoteDate = parseDate(b.quoteDate);
+  if (quoteDate === null) return invalid("quoteDate must be an ISO date");
+  if (quoteDate === undefined) return invalid("quoteDate is required");
+
+  const source = optionalString(b, "source");
+  if (source === null) return invalid("source must be a string");
+
+  return {
+    success: true,
+    data: { unitPrice, quoteDate, source: source || undefined },
+  };
+}
+
+export interface InvestmentListQuery {
+  status?: (typeof INVESTMENT_STATUSES)[number] | undefined;
+  investmentType?: (typeof INVESTMENT_TYPES)[number] | undefined;
+  referenceDate?: Date | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+export function validateInvestmentListQuery(
+  query: unknown,
+): ApiResult<InvestmentListQuery> {
+  const q = asObject(query) ?? {};
+
+  const status = q.status === undefined ? undefined : oneOf(q.status, INVESTMENT_STATUSES);
+  if (q.status !== undefined && !status) {
+    return invalid(`status must be one of ${INVESTMENT_STATUSES.join(", ")}`);
+  }
+
+  const investmentType =
+    q.investmentType === undefined
+      ? undefined
+      : oneOf(q.investmentType, INVESTMENT_TYPES);
+  if (q.investmentType !== undefined && !investmentType) {
+    return invalid(`investmentType must be one of ${INVESTMENT_TYPES.join(", ")}`);
+  }
+
+  const referenceDate = parseDate(q.referenceDate);
+  if (referenceDate === null) {
+    return invalid("referenceDate must be an ISO date");
+  }
+
+  const pagination = parsePagination(q);
+  if (!pagination.success) return pagination;
+
+  return {
+    success: true,
+    data: { status, investmentType, referenceDate, ...pagination.data },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Loans                                                                       */
+/* -------------------------------------------------------------------------- */
+
+const LOAN_STATUSES = [
+  "CONTRACTED",
+  "IN_PROGRESS",
+  "DELINQUENT",
+  "SETTLED",
+] as const;
+
+export interface ContractLoanRequest {
+  accountId: string;
+  personId?: string | undefined;
+  description: string;
+  principalAmount: number;
+  monthlyInterestPercent: number;
+  installmentCount: number;
+  installmentAmount: number;
+  firstDueDate: Date;
+}
+
+export function validateContractLoanRequest(
+  body: unknown,
+): ApiResult<ContractLoanRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const accountId = requiredString(b, "accountId");
+  if (!accountId) return invalid("accountId is required");
+
+  const description = requiredString(b, "description");
+  if (!description) return invalid("description is required");
+
+  const principalAmount = optionalNumber(b, "principalAmount");
+  if (principalAmount === null || principalAmount === undefined) {
+    return invalid("principalAmount is required and must be a number");
+  }
+  if (principalAmount <= 0) {
+    return invalid("principalAmount must be greater than zero");
+  }
+
+  const monthlyInterestPercent = optionalNumber(b, "monthlyInterestPercent");
+  if (monthlyInterestPercent === null) {
+    return invalid("monthlyInterestPercent must be a number");
+  }
+  const rate = monthlyInterestPercent ?? 0;
+  if (rate < 0 || rate > 100) {
+    return invalid("monthlyInterestPercent must be between 0 and 100");
+  }
+
+  const installmentCount = optionalNumber(b, "installmentCount");
+  if (installmentCount === null || installmentCount === undefined) {
+    return invalid("installmentCount is required and must be a number");
+  }
+  if (!Number.isInteger(installmentCount) || installmentCount < 1) {
+    return invalid("installmentCount must be an integer greater than zero");
+  }
+
+  const installmentAmount = optionalNumber(b, "installmentAmount");
+  if (installmentAmount === null || installmentAmount === undefined) {
+    return invalid("installmentAmount is required and must be a number");
+  }
+  if (installmentAmount <= 0) {
+    return invalid("installmentAmount must be greater than zero");
+  }
+
+  const firstDueDate = parseDate(b.firstDueDate);
+  if (firstDueDate === null) return invalid("firstDueDate must be an ISO date");
+  if (firstDueDate === undefined) return invalid("firstDueDate is required");
+
+  const personId = optionalString(b, "personId");
+  if (personId === null) return invalid("personId must be a string");
+
+  return {
+    success: true,
+    data: {
+      accountId,
+      personId: personId || undefined,
+      description,
+      principalAmount,
+      monthlyInterestPercent: rate,
+      installmentCount,
+      installmentAmount,
+      firstDueDate,
+    },
+  };
+}
+
+export interface UpdateLoanRequest {
+  description?: string | undefined;
+  personId?: string | null | undefined;
+}
+
+export function validateUpdateLoanRequest(
+  body: unknown,
+): ApiResult<UpdateLoanRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const description = optionalString(b, "description");
+  if (description === null) return invalid("description must be a string");
+  if (description !== undefined && description.length === 0) {
+    return invalid("description must not be empty");
+  }
+
+  const personId = b.personId === null ? null : optionalString(b, "personId");
+  if (personId === null && b.personId !== null) {
+    return invalid("personId must be a string");
+  }
+
+  return { success: true, data: { description, personId } };
+}
+
+export interface LoanPaymentRequest {
+  accountId: string;
+  amount: number;
+  /** Required, not defaulted: the payment date is part of the record. */
+  paidAt: Date;
+  categoryId?: string | undefined;
+  costCenterId?: string | undefined;
+  description?: string | undefined;
+}
+
+export function validateLoanPaymentRequest(
+  body: unknown,
+): ApiResult<LoanPaymentRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const accountId = requiredString(b, "accountId");
+  if (!accountId) return invalid("accountId is required");
+
+  const amount = optionalNumber(b, "amount");
+  if (amount === null || amount === undefined) {
+    return invalid("amount is required and must be a number");
+  }
+  if (amount <= 0) return invalid("amount must be greater than zero");
+
+  const paidAt = parseDate(b.paidAt);
+  if (paidAt === null) return invalid("paidAt must be an ISO date");
+  if (paidAt === undefined) return invalid("paidAt is required");
+
+  const categoryId = optionalString(b, "categoryId");
+  if (categoryId === null) return invalid("categoryId must be a string");
+
+  const costCenterId = optionalString(b, "costCenterId");
+  if (costCenterId === null) return invalid("costCenterId must be a string");
+
+  const description = optionalString(b, "description");
+  if (description === null) return invalid("description must be a string");
+
+  return {
+    success: true,
+    data: {
+      accountId,
+      amount,
+      paidAt,
+      categoryId: categoryId || undefined,
+      costCenterId: costCenterId || undefined,
+      description: description || undefined,
+    },
+  };
+}
+
+/** An extra amortization takes the same shape as a payment. */
+export type AmortizationRequest = LoanPaymentRequest;
+
+export function validateAmortizationRequest(
+  body: unknown,
+): ApiResult<AmortizationRequest> {
+  return validateLoanPaymentRequest(body);
+}
+
+export interface LoanListQuery {
+  status?: (typeof LOAN_STATUSES)[number] | undefined;
+  personId?: string | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+export function validateLoanListQuery(
+  query: unknown,
+): ApiResult<LoanListQuery> {
+  const q = asObject(query) ?? {};
+
+  const status =
+    q.status === undefined ? undefined : oneOf(q.status, LOAN_STATUSES);
+  if (q.status !== undefined && !status) {
+    return invalid(`status must be one of ${LOAN_STATUSES.join(", ")}`);
+  }
+
+  const pagination = parsePagination(q);
+  if (!pagination.success) return pagination;
+
+  return {
+    success: true,
+    data: {
+      status,
+      personId: optionalString(q, "personId") || undefined,
+      ...pagination.data,
+    },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Net worth and exchange rates                                                */
+/* -------------------------------------------------------------------------- */
+
+export interface NetWorthQuery {
+  referenceDate: Date;
+  displayCurrency?: string | undefined;
+  accountIds?: string[] | undefined;
+}
+
+export function validateNetWorthQuery(
+  query: unknown,
+  reference: Date = new Date(),
+): ApiResult<NetWorthQuery> {
+  const q = asObject(query) ?? {};
+
+  const referenceDate = parseDate(q.referenceDate);
+  if (referenceDate === null) {
+    return invalid("referenceDate must be an ISO date");
+  }
+
+  const displayCurrency = optionalString(q, "displayCurrency");
+  if (displayCurrency === null) {
+    return invalid("displayCurrency must be a string");
+  }
+
+  const accountIds = parseIdList(q.accountIds ?? q.accountId);
+  if (accountIds === null) {
+    return invalid("accountIds must be a list of strings");
+  }
+
+  return {
+    success: true,
+    data: {
+      referenceDate: referenceDate ?? reference,
+      displayCurrency: displayCurrency || undefined,
+      accountIds,
+    },
+  };
+}
+
+export interface NetWorthEvolutionQuery {
+  start: Date;
+  end: Date;
+  displayCurrency?: string | undefined;
+}
+
+export function validateNetWorthEvolutionQuery(
+  query: unknown,
+  reference: Date = new Date(),
+): ApiResult<NetWorthEvolutionQuery> {
+  const period = validateDashboardQuery(query, reference);
+  if (!period.success) return period;
+
+  const displayCurrency = optionalString(asObject(query) ?? {}, "displayCurrency");
+  if (displayCurrency === null) {
+    return invalid("displayCurrency must be a string");
+  }
+
+  return {
+    success: true,
+    data: {
+      start: period.data.start,
+      end: period.data.end,
+      displayCurrency: displayCurrency || undefined,
+    },
+  };
+}
+
+export interface RegisterExchangeRateRequest {
+  sourceCurrency: string;
+  targetCurrency: string;
+  rate: number;
+  rateDate: Date;
+  source?: string | undefined;
+}
+
+export function validateRegisterExchangeRateRequest(
+  body: unknown,
+): ApiResult<RegisterExchangeRateRequest> {
+  const b = asObject(body);
+  if (!b) return invalid("Invalid request body");
+
+  const sourceCurrency = requiredString(b, "sourceCurrency");
+  if (!sourceCurrency) return invalid("sourceCurrency is required");
+
+  const targetCurrency = requiredString(b, "targetCurrency");
+  if (!targetCurrency) return invalid("targetCurrency is required");
+
+  const rate = optionalNumber(b, "rate");
+  if (rate === null || rate === undefined) {
+    return invalid("rate is required and must be a number");
+  }
+  if (rate <= 0) return invalid("rate must be greater than zero");
+
+  const rateDate = parseDate(b.rateDate);
+  if (rateDate === null) return invalid("rateDate must be an ISO date");
+  if (rateDate === undefined) return invalid("rateDate is required");
+
+  const source = optionalString(b, "source");
+  if (source === null) return invalid("source must be a string");
+
+  return {
+    success: true,
+    data: {
+      sourceCurrency: sourceCurrency.toUpperCase(),
+      targetCurrency: targetCurrency.toUpperCase(),
+      rate,
+      rateDate,
+      source: source || undefined,
+    },
+  };
+}
+
+export interface ExchangeRateListQuery {
+  sourceCurrency?: string | undefined;
+  targetCurrency?: string | undefined;
+  from?: Date | undefined;
+  to?: Date | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+export function validateExchangeRateListQuery(
+  query: unknown,
+): ApiResult<ExchangeRateListQuery> {
+  const q = asObject(query) ?? {};
+
+  const from = parseDate(q.from);
+  if (from === null) return invalid("from must be an ISO date");
+
+  const to = parseDate(q.to);
+  if (to === null) return invalid("to must be an ISO date");
+
+  const sourceCurrency = optionalString(q, "sourceCurrency");
+  if (sourceCurrency === null) {
+    return invalid("sourceCurrency must be a string");
+  }
+
+  const targetCurrency = optionalString(q, "targetCurrency");
+  if (targetCurrency === null) {
+    return invalid("targetCurrency must be a string");
+  }
+
+  const pagination = parsePagination(q);
+  if (!pagination.success) return pagination;
+
+  return {
+    success: true,
+    data: {
+      sourceCurrency: sourceCurrency ? sourceCurrency.toUpperCase() : undefined,
+      targetCurrency: targetCurrency ? targetCurrency.toUpperCase() : undefined,
+      from,
+      to,
+      ...pagination.data,
     },
   };
 }

@@ -73,6 +73,9 @@ function toTransaction(
     invoiceId: (row.invoice_id as string | null) ?? undefined,
     costCenterId: (row.cost_center_id as string | null) ?? undefined,
     personId: (row.person_id as string | null) ?? undefined,
+    investmentOperationId:
+      (row.investment_operation_id as string | null) ?? undefined,
+    loanInstallmentId: (row.loan_installment_id as string | null) ?? undefined,
     createdAt: new Date(row.created_at as string),
   });
 }
@@ -135,6 +138,8 @@ export class KnexTransactionRepository implements TransactionRepository {
       invoice_id: transaction.invoiceId ?? null,
       cost_center_id: transaction.costCenterId ?? null,
       person_id: transaction.personId ?? null,
+      investment_operation_id: transaction.investmentOperationId ?? null,
+      loan_installment_id: transaction.loanInstallmentId ?? null,
     };
   }
 
