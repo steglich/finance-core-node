@@ -14,6 +14,14 @@ import {
 } from "../../financeiro/domain/category.js";
 
 /**
+ * The one authentication failure the client ever sees. The submitted email is
+ * deliberately absent from the message: echoing it back turns the error into a
+ * confirmation that the address was received, and it lands in client logs.
+ */
+const INVALID_CREDENTIALS = (): DomainError =>
+  DomainError.create("UNAUTHORIZED", "Email ou senha incorretos");
+
+/**
  * Input for creating a new user.
  */
 export interface CreateUserInput {
@@ -82,19 +90,23 @@ export class UserService {
     const emailObj = new Email(email);
     const user = await this.userRepository.findByEmail(emailObj.value);
 
+    // Unknown email, wrong password and deactivated account all leave through
+    // the single exit below. Distinct paths — different status, different
+    // message, or simply a faster answer — each disclose whether an account
+    // exists, and separate paths drift apart again on the first maintenance.
     if (!user) {
-      throw DomainError.create(
-        "ENTITY_NOT_FOUND",
-        `User with email ${email} not found`,
-      );
+      // Spend the same CPU the real path would, so response time says nothing.
+      await this.passwordService.verifyDiscarded(password);
+      throw INVALID_CREDENTIALS();
     }
 
     const isValidPassword = await this.passwordService.verify(
       password,
       user.passwordHash,
     );
-    if (!isValidPassword) {
-      throw DomainError.create("VALIDATION_ERROR", "Invalid password");
+
+    if (!isValidPassword || !user.isActive()) {
+      throw INVALID_CREDENTIALS();
     }
 
     // Get all companies the user belongs to

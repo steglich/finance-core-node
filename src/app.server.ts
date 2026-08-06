@@ -87,13 +87,24 @@ import {
 import { registerAuditHandlers } from "./auditoria/infrastructure/audit-event-handlers.js";
 import { AuditController } from "./auditoria/api/audit-controller.js";
 import { registerRoutes } from "./routes/index.js";
+import {
+  resolveSecurityConfig,
+  type SecurityConfig,
+} from "./shared/infrastructure/security-config.js";
+import { registerSecurityPlugins } from "./shared/infrastructure/security-plugins.js";
 
 /**
  * HTTP application: composition root + Fastify instance.
  */
 export class AppServer {
   private readonly logger = createLogger();
-  private readonly app: FastifyInstance = Fastify({ logger: false });
+  private readonly security: SecurityConfig = resolveSecurityConfig();
+  // `trustProxy` has to be decided at construction: it governs how Fastify
+  // resolves `request.ip`, which the rate limit and the access log both read.
+  private readonly app: FastifyInstance = Fastify({
+    logger: false,
+    trustProxy: this.security.trustProxy,
+  });
   private database?: DatabaseConnection;
   private ready?: Promise<void>;
 
@@ -399,6 +410,7 @@ export class AppServer {
       profileRepository,
     });
 
+    await registerSecurityPlugins(this.app, this.security);
     this.registerHooks();
 
     await registerRoutes(this.app, {
@@ -430,27 +442,13 @@ export class AppServer {
       auditController,
       requireAuditManage: requirePermission("audit", "MANAGE"),
       authenticate: createAuthenticate(jwtTokenService),
+      authRateLimit: this.security.authRateLimit,
     });
 
     await this.app.ready();
   }
 
   private registerHooks(): void {
-    // CORS for development
-    this.app.addHook("onRequest", async (request, reply) => {
-      reply.header("Access-Control-Allow-Origin", "*");
-      reply.header(
-        "Access-Control-Allow-Methods",
-        "GET, POST, PUT, DELETE, OPTIONS",
-      );
-      reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
-      if (request.method === "OPTIONS") {
-        return reply.code(204).send();
-      }
-      return undefined;
-    });
-
     // Structured access log for every completed request
     this.app.addHook("onResponse", async (request, reply) => {
       this.logger.info("request", {

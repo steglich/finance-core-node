@@ -53,6 +53,42 @@ export interface Transaction {
 }
 
 /**
+ * Transport security for the database connection.
+ *
+ * `false` disables TLS entirely and is only appropriate for a local socket.
+ * `{ rejectUnauthorized: true }` requires the server certificate to verify
+ * against a trusted CA; `false` encrypts without verifying, which stops passive
+ * capture but not an active man in the middle.
+ */
+export type DatabaseSslConfig = false | { rejectUnauthorized: boolean };
+
+/**
+ * Reads the transport configuration from the environment.
+ *
+ * Kept explicit instead of letting the connection string decide: `sslmode` in a
+ * URL is easy to drop when copying between environments, and the failure is
+ * silent — the connection just goes plaintext.
+ *
+ * - `DATABASE_SSL=false` — no TLS (local development)
+ * - `DATABASE_SSL_REJECT_UNAUTHORIZED=false` — TLS without certificate
+ *   verification, for a managed database presenting a self-signed certificate
+ *
+ * Both default to the strict setting, so an unconfigured deployment fails
+ * closed rather than open.
+ */
+export function resolveDatabaseSsl(
+  env: NodeJS.ProcessEnv = process.env,
+): DatabaseSslConfig {
+  if (env.DATABASE_SSL === "false") {
+    return false;
+  }
+
+  return {
+    rejectUnauthorized: env.DATABASE_SSL_REJECT_UNAUTHORIZED !== "false",
+  };
+}
+
+/**
  * Creates a database connection from environment configuration.
  * Uses DATABASE_URL environment variable.
  */
@@ -62,7 +98,7 @@ export function createDatabaseConnection(logger: Logger): DatabaseConnection {
     throw new Error("DATABASE_URL environment variable is required");
   }
 
-  return new KnexDatabaseConnection(databaseUrl, logger);
+  return new KnexDatabaseConnection(databaseUrl, logger, resolveDatabaseSsl());
 }
 
 /**
@@ -76,10 +112,13 @@ class KnexDatabaseConnection implements DatabaseConnection {
     databaseUrl: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _logger: Logger,
+    ssl: DatabaseSslConfig,
   ) {
     this.knex = knexLib({
       client: "pg",
-      connection: databaseUrl,
+      // The connection string is passed as an object so `ssl` wins over
+      // whatever `sslmode` the URL happens to carry.
+      connection: { connectionString: databaseUrl, ssl },
       migrations: {
         directory: "./migrations",
         tableName: "knex_migrations",

@@ -3,6 +3,7 @@ import type { AuthController } from "../identity/api/auth-controller.js";
 import type { CompanyController } from "../identity/api/company-controller.js";
 import type { ProfileController } from "../identity/api/profile-controller.js";
 import { createAuthRoutes } from "./auth-routes.js";
+import type { RateLimitConfig } from "../shared/infrastructure/security-config.js";
 import { createCompanyRoutes } from "./company-routes.js";
 import { createProfileRoutes } from "./profile-routes.js";
 import {
@@ -67,6 +68,8 @@ export interface RouteDependencies
   companyController: CompanyController;
   profileController: ProfileController;
   authenticate: preHandlerHookHandler;
+  /** Stricter limit applied inside the /auth plugin only. */
+  authRateLimit: RateLimitConfig;
 }
 
 /**
@@ -85,9 +88,10 @@ export async function registerRoutes(
   await app.register(
     async (api) => {
       // identity
-      await api.register(createAuthRoutes(deps.authController), {
-        prefix: "/auth",
-      });
+      await api.register(
+        createAuthRoutes(deps.authController, deps.authRateLimit),
+        { prefix: "/auth" },
+      );
       await api.register(
         createCompanyRoutes({
           controller: deps.companyController,

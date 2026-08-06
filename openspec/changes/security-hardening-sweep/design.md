@@ -220,6 +220,43 @@ depois desta change.
 restabelece as sessões antigas apenas se o segredo não tiver mudado junto, então não
 rotacionar `JWT_SECRET` no mesmo deploy.
 
+### Valores de limite de taxa adotados
+
+Registrados aqui como ponto de partida folgado, conforme o passo 3: ligar largo e
+apertar observando os 429 no log de acesso. Todos vêm de variável de ambiente
+(`RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW`, `AUTH_RATE_LIMIT_MAX`,
+`AUTH_RATE_LIMIT_WINDOW`) e mudam sem tocar em código.
+
+| Ambiente | Global | `/auth` |
+|---|---|---|
+| Default do código | 300 / minuto | 10 / minuto |
+| Desenvolvimento | default | default |
+| Homologação | default | default |
+| Produção | rever após a primeira semana de 429 observados | rever junto |
+
+O contador é em memória do processo (Decisão 4): com N instâncias o limite efetivo
+é N×limite. Ao escalar horizontalmente, este é o primeiro item a revisar.
+
+### Estado da atualização de dependências
+
+O espelho de registry disponível neste ambiente tem corte em 2026-07-23, e as
+versões que fecham os dois advisories restantes de `fastify` foram publicadas
+depois disso. O que foi possível aplicar:
+
+| Pacote | Alvo da Decisão 10 | Instalado | Observação |
+|---|---|---|---|
+| `bcrypt` | 6.0.0 | 6.0.0 | Cadeia crítica do `tar` eliminada |
+| `fastify` | 5.11.2 | 5.10.0 | 5.11.x indisponível no espelho |
+| `find-my-way` | — | corrigido | Resolvido por `npm audit fix` sem subir o `fastify` |
+| `fast-uri` | — | **pendente** | Correção em 3.1.5 / 4.1.2, publicadas após o corte |
+| `@fastify/rate-limit` | 11.2.0 | 11.1.0 | 11.2.0 publicada após o corte |
+| `@fastify/helmet` | 13.1.0 | 13.1.0 | — |
+| `@fastify/cors` | 11.3.0 | 11.3.0 | — |
+
+O advisory de `fast-uri` (host confusion, high) segue aberto e não é fechável aqui:
+depende de subir `fastify` num ambiente com acesso ao registry atual. É o único item
+da change que continua pendente.
+
 ## Open Questions
 
 - Valores iniciais de limite de taxa (requisições por janela, global e em `/auth`).

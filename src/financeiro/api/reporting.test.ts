@@ -501,6 +501,30 @@ describe("Reports", () => {
       'Categoria,Valor,% do total\r\nAlimentação,800,100',
     );
   });
+
+  it("neutralizes a formula carried by a user-supplied name, end to end", async () => {
+    const reporting = new FakeReportingRepository({
+      categories: [
+        {
+          categoryId: "c1",
+          categoryName: "=cmd|'/c calc'!A1",
+          amount: -800,
+          percent: 100,
+        },
+      ],
+    });
+
+    const result = await new ReportController(reporting).export(
+      COMPANY_ID,
+      "by-category",
+      PERIOD,
+    );
+
+    const csv = String(result.body);
+    assert.ok(csv.includes(`"'=cmd|'/c calc'!A1"`));
+    // The amount is negative and must stay a number in the spreadsheet.
+    assert.ok(csv.endsWith(",-800,100"));
+  });
 });
 
 describe("CSV serialization", () => {
@@ -514,6 +538,33 @@ describe("CSV serialization", () => {
     assert.equal(escapeCsvField("Mercado, feira"), '"Mercado, feira"');
     assert.equal(escapeCsvField('Diz "oi"'), '"Diz ""oi"""');
     assert.equal(escapeCsvField("linha1\nlinha2"), '"linha1\nlinha2"');
+  });
+
+  it("neutralizes a field a spreadsheet would evaluate as a formula", () => {
+    assert.equal(escapeCsvField("=cmd|'/c calc'!A1"), `"'=cmd|'/c calc'!A1"`);
+    assert.equal(escapeCsvField("+1+1"), `"'+1+1"`);
+    assert.equal(escapeCsvField("@SUM(A1)"), `"'@SUM(A1)"`);
+    assert.equal(escapeCsvField("\tDATA()"), `"'\tDATA()"`);
+    assert.equal(escapeCsvField("-1+cmd|'/c calc'!A1"), `"'-1+cmd|'/c calc'!A1"`);
+  });
+
+  it("keeps a neutralized value recoverable and the file valid CSV", () => {
+    const payload = "=HYPERLINK(\"http://evil\",\"click\")";
+    const field = escapeCsvField(payload);
+
+    // Quoted, with the embedded quotes doubled — still parseable as one field.
+    assert.ok(field.startsWith('"') && field.endsWith('"'));
+    const parsed = field.slice(1, -1).replaceAll('""', '"');
+    assert.equal(parsed, `'${payload}`);
+    // Dropping the apostrophe, exactly what a spreadsheet does, gives it back.
+    assert.equal(parsed.slice(1), payload);
+  });
+
+  it("does not touch negative numbers, which reports are full of", () => {
+    assert.equal(escapeCsvField(-1500), "-1500");
+    assert.equal(escapeCsvField(-0.5), "-0.5");
+    assert.equal(escapeCsvField("-1.5e3"), "-1.5e3");
+    assert.equal(escapeCsvField("+42"), "+42");
   });
 
   it("keeps the header line and the column order", () => {

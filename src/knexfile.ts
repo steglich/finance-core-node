@@ -2,6 +2,7 @@ import "dotenv/config";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Knex } from "knex";
+import { resolveDatabaseSsl } from "./shared/infrastructure/database-connection.js";
 
 // The knex CLI resolves relative directories against the working directory, not
 // against this file, so the paths are anchored here instead.
@@ -9,7 +10,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 const config: Knex.Config = {
   client: "pg",
-  connection: process.env.DATABASE_URL ?? "",
+  // Same explicit transport configuration the server uses, so migrations and
+  // seeds do not reach the database over a weaker connection than the app.
+  connection: {
+    connectionString: process.env.DATABASE_URL ?? "",
+    ssl: resolveDatabaseSsl(),
+  },
   migrations: {
     directory: join(here, "migrations"),
     tableName: "knex_migrations",

@@ -8,6 +8,7 @@ import Fastify, {
 import { DomainError } from "../../shared/domain/domain-error.js";
 import { DomainEventBus } from "../../shared/domain/domain-event-bus.js";
 import { toHttpStatusCode } from "../../shared/api/controller-result.js";
+import rateLimit from "@fastify/rate-limit";
 import { registerRoutes } from "../../routes/index.js";
 import { Account, type AccountEntry } from "../domain/account.js";
 import { Category } from "../domain/category.js";
@@ -466,6 +467,10 @@ interface Harness {
 async function buildHarness(companyId = COMPANY_ID): Promise<Harness> {
   const app = Fastify({ logger: false });
 
+  // The /auth plugin registers its own limit through `app.rateLimit()`, so the
+  // plugin has to exist here too. The ceiling is high enough to stay invisible.
+  await app.register(rateLimit, { global: false, max: 10_000 });
+
   const transactions = new InMemoryTransactionRepository();
   const accounts = new InMemoryAccountRepository(transactions);
   const wallets = new InMemoryWalletRepository();
@@ -522,6 +527,7 @@ async function buildHarness(companyId = COMPANY_ID): Promise<Harness> {
     netWorthController: stub,
     exchangeRateController: stub,
     requireAuditManage: (async () => undefined) as never,
+    authRateLimit: { max: 10_000, timeWindow: "1 minute" },
     accountController: new AccountController(accounts, wallets, cards, invoices),
     categoryController: new CategoryController(categories, transactions),
     transactionController: new TransactionController(

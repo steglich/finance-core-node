@@ -27,9 +27,15 @@ Este documento define as regras, convenções e padrões que todo agente de IA d
 | `bcrypt` | Hash de senha (`PasswordService`) |
 | `jsonwebtoken` | Access/refresh tokens (`JwtTokenService`) |
 | `dotenv` | Carrega `.env` no `src/index.ts` |
+| `@fastify/helmet` | Headers de segurança em toda resposta |
+| `@fastify/cors` | CORS por allowlist de origens |
+| `@fastify/rate-limit` | Limite de requisições global e estrito em `/auth` |
 
-O HTTP é servido pelo Fastify (v5), mas **sem plugins externos** — CORS, auth e
-tratamento de erro são hooks próprios em `app.server.ts`. Não há ORM, biblioteca
+O HTTP é servido pelo Fastify (v5), com apenas três plugins externos, todos do
+escopo oficial `@fastify/*` e registrados na raiz por
+`registerSecurityPlugins`: `helmet` (headers de segurança), `cors` (allowlist de
+origens) e `rate-limit`. Auth e tratamento de erro seguem sendo hooks próprios
+em `app.server.ts`. Não há ORM, biblioteca
 de validação (Zod) nem test runner: as queries usam Knex direto e a validação de
 entrada é feita à mão em `dtos.ts`. Mantenha esse padrão.
 
@@ -221,7 +227,15 @@ Lidas de `.env` (carregado por `dotenv` no `src/index.ts`):
 | `DATABASE_URL` | Conexão Postgres — obrigatória para o servidor e para os comandos `db:*` |
 | `PORT` | Porta HTTP (default `3000`) |
 | `NODE_ENV` | Ambiente |
-| `JWT_SECRET` | Assinatura dos tokens (access 15m, refresh 7d) |
+| `JWT_SECRET` | Assinatura dos tokens (access 15m, refresh 7d) — mínimo de 32 bytes; o servidor recusa iniciar com segredo mais curto ou ausente |
+| `JWT_ISSUER` | Emissor (`iss`) gravado e verificado nos tokens (default `finance-core`) |
+| `JWT_AUDIENCE` | Audiência (`aud`) gravada e verificada nos tokens (default `finance-core-api`) |
+| `DATABASE_SSL` | `false` desliga o TLS na conexão Postgres; qualquer outro valor mantém ligado (default) |
+| `DATABASE_SSL_REJECT_UNAUTHORIZED` | `false` cifra sem verificar o certificado do servidor (default: verifica) |
+| `TRUST_PROXY` | `true` faz `request.ip` vir dos headers de encaminhamento — ligue apenas atrás de proxy (default `false`) |
+| `CORS_ORIGINS` | Allowlist de origens separada por vírgula; vazia significa nenhuma origem permitida |
+| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW` | Limite global de requisições por janela (default `300` / `1 minute`) |
+| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW` | Limite estrito em `/auth` (default `10` / `1 minute`) |
 
 ### Testes
 

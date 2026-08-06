@@ -1,4 +1,5 @@
 import type { ControllerResult } from "../../shared/api/controller-result.js";
+import { DomainError } from "../../shared/domain/domain-error.js";
 import type { UserRepository } from "../infrastructure/user-repository.js";
 import type { CompanyRepository } from "../infrastructure/company-repository.js";
 import type { ProfileRepository } from "../infrastructure/profile-repository.js";
@@ -182,6 +183,28 @@ export class AuthController {
       };
     }
 
+    // A refresh token lives for 7 days; the access it stands for may not.
+    // Re-check the subject before minting anything, so a user deactivated or
+    // removed from the company cannot keep operating until the token expires.
+    const user = await this.userRepository.findById(decoded.userId);
+    if (!user || !user.isActive()) {
+      return {
+        statusCode: 401,
+        body: { error: "Invalid or expired refresh token" },
+      };
+    }
+
+    const companyIds = await this.companyRepository.findUserCompanies(
+      decoded.userId,
+    );
+    if (!companyIds.includes(decoded.companyId)) {
+      return {
+        statusCode: 401,
+        body: { error: "Invalid or expired refresh token" },
+      };
+    }
+
+    // Both tokens are reissued: the refresh token rotates on every renewal.
     return {
       statusCode: 200,
       body: { tokens: this.issueTokens(decoded.userId, decoded.companyId) },
@@ -214,11 +237,13 @@ export class AuthController {
       return { statusCode: 400, body: { error: validation.error.message } };
     }
 
-    // In a real implementation, this would verify the token and update the password
-    return {
-      statusCode: 200,
-      body: { message: "Password has been reset successfully" },
-    };
+    // The reset flow — recovery token issued, persisted and verified — does not
+    // exist yet. Answering 200 would tell the client a password changed when
+    // none did; saying so plainly is the only honest response until it exists.
+    throw DomainError.create(
+      "NOT_IMPLEMENTED",
+      "Password reset is not implemented yet",
+    );
   }
 
   private issueTokens(

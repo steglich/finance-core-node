@@ -9,7 +9,8 @@ export type DomainErrorCode =
   | "BUSINESS_RULE_VIOLATION"
   | "UNAUTHORIZED_ACCESS"
   | "COMPANY_CONTEXT_REQUIRED"
-  | "UNAUTHORIZED";
+  | "UNAUTHORIZED"
+  | "NOT_IMPLEMENTED";
 
 /**
  * Base class for all domain errors.

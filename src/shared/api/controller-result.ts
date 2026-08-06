@@ -31,6 +31,8 @@ export function toHttpStatusCode(code: DomainErrorCode): number {
       return 404;
     case "DUPLICATE_ENTITY":
       return 409;
+    case "NOT_IMPLEMENTED":
+      return 501;
     default:
       return 500;
   }
